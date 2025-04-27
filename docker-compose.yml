@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  bot:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: wb_analytics_bot
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+    env_file:
+      - .env
+    restart: unless-stopped
+    depends_on:
+      - redis
+    networks:
+      - bot_network
+
+  redis:
+    image: redis:alpine
+    container_name: wb_redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - bot_network
+
+volumes:
+  redis_data:
+    driver: local
+
+networks:
+  bot_network:
+    driver: bridge 
