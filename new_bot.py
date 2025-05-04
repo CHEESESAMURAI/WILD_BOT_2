@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from aiogram.enums import ChatAction, ParseMode
 from main import ProductCardAnalyzer, TrendAnalyzer
 from niche_analyzer import NicheAnalyzer
@@ -24,6 +24,11 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.common.exceptions import TimeoutException
+import matplotlib.pyplot as plt
+import tempfile
+import numpy as np
+from fpdf import FPDF
+import instaloader
 
 # Настройка логирования
 logging.basicConfig(
@@ -37,7 +42,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Инициализация бота и диспетчера
-BOT_TOKEN = "6458024697:AAHAPSC6KvZaaAgtmkCy08Id0Pq3o87IG-A"  # Обновленный токен
+BOT_TOKEN = "7790448077:AAFiiS0a44A40zJUEivONLRutB-kqradDdE"  # Обновленный токен
 ADMIN_ID = 1659228199  # Замените на ваш ID в Telegram
 SERPER_API_KEY = "8ba851ed7ae1e6a655102bea15d73fdb39cdac79"  # ключ для serper.dev API
 
@@ -101,13 +106,26 @@ class UserStates(StatesGroup):
 
 # Приветственное сообщение
 WELCOME_MESSAGE = (
-    "👋 *Добро пожаловать в WHITESAMURAI!*\n\n"
-    "Я помогу вам анализировать товары и ниши на Wildberries.\n"
-    "Доступные команды:\n"
-    "/start - Показать это сообщение\n"
-    "/help - Получить справку\n"
-    "/balance - Проверить баланс\n"
-    "/profile - Личный кабинет"
+    "✨👋 *Добро пожаловать в WHITESAMURAI!* ✨\n\n"
+    "Я — ваш цифровой самурай и эксперт по Wildberries!\n"
+    "\n"
+    "🔎 *Что я умею?*\n"
+    "• 📈 Анализирую товары и ниши\n"
+    "• 💡 Даю персональные рекомендации\n"
+    "• 🏆 Помогаю находить тренды и прибыльные идеи\n"
+    "• 📊 Отслеживаю продажи и остатки\n"
+    "• 🌐 Ищу упоминания в соцсетях\n"
+    "• 📝 Формирую понятные отчёты\n"
+    "\n"
+    "*Команды для быстрого старта:*\n"
+    "▫️ /start — Главное меню\n"
+    "▫️ /help — Справка и советы\n"
+    "▫️ /balance — Баланс и пополнение\n"
+    "▫️ /profile — Личный кабинет\n"
+    "\n"
+    "⚡️ *Вдохновляйтесь, анализируйте, побеждайте!*\n"
+    "Ваш успех — моя миссия.\n\n"
+    "👇 *Выберите функцию в меню ниже и начните свой путь к вершинам продаж!* 🚀"
 )
 
 # Клавиатура основного меню
@@ -527,20 +545,119 @@ async def handle_niche_analysis(callback_query: types.CallbackQuery, state: FSMC
             show_alert=True
         )
 
-def extract_likes_views(block: str):
-    """Извлекает количество лайков и просмотров из текста."""
-    block_lower = block.lower()
-    matches = re.findall(r'(\d+)\s*likes,\s*(\d+)\s*comments', block_lower)
-    if matches:
-        try:
-            return int(matches[0][0]), int(matches[0][1])
-        except ValueError:
-            pass
-    m_likes = re.search(r'(\d+)\s*likes', block_lower)
-    m_views = re.search(r'(\d+)\s*comments', block_lower)
-    likes = int(m_likes.group(1)) if m_likes else 0
-    views = int(m_views.group(1)) if m_views else 0
+def extract_likes_views(snippet: str):
+    likes = 0
+    views = 0
+    # Ищем паттерны типа "123 лайка", "456 просмотров", "123 likes", "456 views", "👍 123", "👀 456"
+    m_likes = re.search(r'(\d+)[^\d]{0,5}(лайк|likes?)', snippet, re.IGNORECASE)
+    m_views = re.search(r'(\d+)[^\d]{0,5}(просмотр|views?)', snippet, re.IGNORECASE)
+    # Эмодзи-форматы
+    m_likes_emoji = re.search(r'👍\s*(\d+)', snippet)
+    m_views_emoji = re.search(r'👀\s*(\d+)', snippet)
+    # YouTube-стиль: "123K views"
+    m_views_youtube = re.search(r'(\d+[.,]?\d*[KkМм]?)\s*views?', snippet)
+    if m_likes:
+        likes = int(m_likes.group(1))
+    elif m_likes_emoji:
+        likes = int(m_likes_emoji.group(1))
+    if m_views:
+        views = int(m_views.group(1))
+    elif m_views_emoji:
+        views = int(m_views_emoji.group(1))
+    elif m_views_youtube:
+        val = m_views_youtube.group(1).replace(',', '.')
+        if 'K' in val or 'К' in val or 'к' in val:
+            views = int(float(val.replace('K','').replace('К','').replace('к','')) * 1000)
+        elif 'M' in val or 'М' in val or 'м' in val:
+            views = int(float(val.replace('M','').replace('М','').replace('м','')) * 1000000)
+        else:
+            try:
+                views = int(val)
+            except:
+                pass
     return likes, views
+
+# --- YouTube ---
+YOUTUBE_API_KEY = 'AIzaSyD-epfqmQhkKJcjy_V3nP93VniUIGEb3Sc'
+def get_youtube_likes_views(url):
+    """Получить лайки и просмотры с YouTube по ссылке на видео."""
+    video_id = None
+    m = re.search(r'(?:v=|youtu\.be/)([\w-]{11})', url)
+    if m:
+        video_id = m.group(1)
+    if not video_id:
+        return 0, 0
+    api_url = f'https://www.googleapis.com/youtube/v3/videos?part=statistics&id={video_id}&key={YOUTUBE_API_KEY}'
+    try:
+        resp = requests.get(api_url, timeout=5)
+        data = resp.json()
+        stats = data['items'][0]['statistics']
+        views = int(stats.get('viewCount', 0))
+        likes = int(stats.get('likeCount', 0)) if 'likeCount' in stats else 0
+        return likes, views
+    except Exception as e:
+        return 0, 0
+
+# --- VK ---
+VK_SERVICE_KEY = 'f5a40946f5a40946f5a40946a0f6944232ff5a4f5a409469daa2e76f8ea701e061483db'
+def get_vk_likes_views(url):
+    """Получить лайки и просмотры с VK по ссылке на пост."""
+    # Пример ссылки: https://vk.com/wall-123456_789
+    m = re.search(r'vk\.com/wall(-?\d+)_([\d]+)', url)
+    if not m:
+        return 0, 0
+    owner_id, post_id = m.group(1), m.group(2)
+    api_url = f'https://api.vk.com/method/wall.getById?posts={owner_id}_{post_id}&access_token={VK_SERVICE_KEY}&v=5.131'
+    try:
+        resp = requests.get(api_url, timeout=5)
+        data = resp.json()
+        post = data['response'][0]
+        likes = post['likes']['count'] if 'likes' in post else 0
+        views = post['views']['count'] if 'views' in post else 0
+        return likes, views
+    except Exception as e:
+        return 0, 0
+
+# --- Instagram парсинг лайков/подписчиков ---
+def get_instagram_likes_views(url):
+    """Пытается получить лайки/просмотры для поста или подписчиков для профиля Instagram через парсинг."""
+    import requests
+    import re
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        }
+        resp = requests.get(url, headers=headers, timeout=7)
+        html = resp.text
+        # Для поста (reel/photo/video): ищем "likes" и "views"
+        m_likes = re.search(r'"edge_media_preview_like":\{"count":(\d+)\}', html)
+        m_views = re.search(r'"video_view_count":(\d+)', html)
+        likes = int(m_likes.group(1)) if m_likes else 0
+        views = int(m_views.group(1)) if m_views else 0
+        # Для профиля: ищем подписчиков
+        m_followers = re.search(r'"edge_followed_by":\{"count":(\d+)\}', html)
+        if m_followers:
+            likes = int(m_followers.group(1))
+        return likes, views
+    except Exception:
+        return 0, 0
+
+# --- Обновляем get_real_likes_views ---
+def get_real_likes_views(url, snippet):
+    if 'youtube.com' in url or 'youtu.be' in url:
+        likes, views = get_youtube_likes_views(url)
+        if likes or views:
+            return likes, views
+    if 'vk.com/wall' in url:
+        likes, views = get_vk_likes_views(url)
+        if likes or views:
+            return likes, views
+    if 'instagram.com' in url:
+        likes, views = get_instagram_likes_views(url)
+        if likes or views:
+            return likes, views
+    # fallback: из snippet
+    return extract_likes_views(snippet)
 
 def estimate_impact(likes, views):
     """Оценивает влияние на основе лайков и просмотров."""
@@ -736,7 +853,7 @@ async def global_search_serper_detailed(query: str):
             if any(allowed_domain in domain for allowed_domain in allowed_domains):
                 # Получаем лайки и просмотры
                 snippet = item.get("snippet", "")
-                likes, views = extract_likes_views(snippet)
+                likes, views = get_real_likes_views(link, snippet)
                 
                 # Оцениваем влияние
                 clients, revenue, growth = estimate_impact(likes, views)
@@ -780,37 +897,90 @@ async def global_search_serper_detailed(query: str):
         logger.error(f"Error in global search: {str(e)}", exc_info=True)
         return {"error": "Произошла ошибка при выполнении поиска", "results": []}
 
-def format_serper_results_detailed(search_data):
-    """Форматирует результаты поиска в читаемый вид."""
+def format_serper_results_detailed(search_data, chart_path=None):
+    """Форматирует результаты поиска в читаемый вид с корректным HTML-форматированием."""
     if search_data["error"]:
         return search_data["error"]
-    
+
     results = []
+    total_likes = 0
+    total_views = 0
+    platforms_counter = {}
+    
     for item in search_data["results"]:
-        title = item.get("title", "").replace("*", "\\*").replace("_", "\\_").replace("`", "\\`")
-        link = item.get("link", "").replace("*", "\\*").replace("_", "\\_").replace("`", "\\`")
-        site = item.get("site", "").replace("*", "\\*").replace("_", "\\_").replace("`", "\\`")
+        # Экранируем специальные символы в тексте
+        title = item.get("title", "").replace("<", "&lt;").replace(">", "&gt;")
+        link = item.get("link", "").replace("<", "&lt;").replace(">", "&gt;")
+        site = item.get("site", "").replace("<", "&lt;").replace(">", "&gt;")
         likes = item.get("likes", 0)
         views = item.get("views", 0)
         clients = item.get("approx_clients", 0)
         revenue = item.get("approx_revenue", 0)
         growth = item.get("growth_percent", 0)
         
+        total_likes += likes
+        total_views += views
+        platforms_counter[site] = platforms_counter.get(site, 0) + 1
+
+        # Определяем статус и рекомендацию
+        status = ""
+        if 'instagram.com' in site and likes == 0 and views == 0:
+            status = "⚠️ Данные защищены"
+        elif likes + views == 0:
+            status = "⚠️ Нет данных"
+        elif likes > 1000 or views > 10000:
+            status = "🔥 Высокая активность"
+        else:
+            status = "📊 Средняя активность"
+
         result = (
-            f"🔗 [{title}]({link})\n"
-            f"🌐 Площадка: {site}\n"
-            f"👍 Лайки: {likes:,}, 👀 Просмотры: {views:,}\n"
-            f"👥 Примерная аудитория: {clients:,}\n"
-            f"💰 Потенциальная выручка: {revenue:,}₽\n"
-            f"📈 Прогноз роста: {growth:.1f}%"
+            f"\n🔗 <b>{title}</b>\n"
+            f"🌐 <b>Площадка:</b> {site}\n"
+            f"🔍 <a href='{link}'>Открыть ссылку</a>\n"
+            f"👍 <b>Лайки:</b> {likes:,}  👀 <b>Просмотры:</b> {views:,}\n"
+            f"👥 <b>Аудитория:</b> {clients:,}\n"
+            f"💰 <b>Потенц. выручка:</b> {revenue:,}₽\n"
+            f"📈 <b>Прогноз роста:</b> {growth:.1f}%\n"
+            f"{status}"
         )
         results.append(result)
-    
-    # Добавляем заголовок и статистику
-    header = "🔍 *Результаты анализа социальных сетей*\n\n"
-    stats = f"\n\n📊 Найдено упоминаний: {len(results)}"
-    
-    return header + "\n\n".join(results) + stats
+
+    # Формируем заголовок
+    most_popular = max(platforms_counter, key=platforms_counter.get) if platforms_counter else "—"
+    header = (
+        "🌐 <b>Анализ социальных сетей</b>\n\n"
+        f"📊 <b>Общая статистика:</b>\n"
+        f"• Найдено упоминаний: {len(results)}\n"
+        f"• Суммарные лайки: {total_likes:,}\n"
+        f"• Суммарные просмотры: {total_views:,}\n"
+        f"• Самая активная площадка: {most_popular}\n\n"
+        "<b>Результаты поиска:</b>"
+    )
+
+    # Добавляем рекомендации
+    recommendations = (
+        "\n\n📋 <b>Рекомендации:</b>\n"
+        "• Фокусируйтесь на площадках с высокой активностью\n"
+        "• Используйте таргетированную рекламу\n"
+        "• Работайте с блогерами и лидерами мнений\n"
+        "• Создавайте качественный контент\n"
+    )
+
+    # Добавляем информацию о графике
+    chart_info = ""
+    if chart_path:
+        chart_info = "\n\n📊 <b>Подробный анализ доступен в PDF-отчёте</b>"
+
+    # Добавляем футер
+    footer = (
+        "\n\n💡 <b>Следующие шаги:</b>\n"
+        "1. Проанализируйте площадки с высокой активностью\n"
+        "2. Составьте план продвижения\n"
+        "3. Начните работу с самых перспективных каналов"
+    )
+
+    # Собираем все части сообщения
+    return header + "\n".join(results) + recommendations + chart_info + footer
 
 @dp.message(lambda message: message.text and message.text.strip(), UserStates.waiting_for_search)
 async def handle_search_query(message: types.Message, state: FSMContext):
@@ -987,22 +1157,152 @@ async def handle_payment_screenshot(message: types.Message, state: FSMContext):
         )
         await state.clear()
 
-@dp.message(F.text)
+@dp.message(F.text, UserStates.waiting_for_payment_amount)
 async def handle_payment_amount(message: types.Message, state: FSMContext):
     try:
         amount = float(message.text)
         if amount < 100:
             await message.answer("❌ Минимальная сумма пополнения: 100₽")
             return
-        
         await state.update_data(amount=amount)
         await state.set_state(UserStates.waiting_for_payment_screenshot)
         await message.answer(
-            f"💰 Сумма пополнения: {amount}₽\n\n"
-            "Теперь отправьте скриншот подтверждения оплаты"
+            f"💰 Сумма пополнения: {amount}₽\n\nТеперь отправьте скриншот подтверждения оплаты"
         )
     except ValueError:
         await message.answer("❌ Пожалуйста, введите корректную сумму")
+
+def build_area_chart(labels, sales, revenue, profit, title, filename_prefix):
+    plt.figure(figsize=(8, 5))
+    x = np.arange(len(labels))
+    plt.plot(x, sales, color='#4e79a7', linewidth=2.5, label='Продажи, шт.')
+    plt.fill_between(x, sales, color='#4e79a7', alpha=0.18)
+    plt.plot(x, revenue, color='#f28e2b', linewidth=2.5, label='Выручка, ₽')
+    plt.fill_between(x, revenue, color='#f28e2b', alpha=0.18)
+    plt.plot(x, profit, color='#e15759', linewidth=2.5, label='Прибыль, ₽')
+    plt.fill_between(x, profit, color='#e15759', alpha=0.18)
+    plt.xticks(x, labels, fontsize=13)
+    plt.yticks(fontsize=13)
+    plt.title(title, fontsize=16)
+    plt.grid(axis='y', linestyle='--', alpha=0.5)
+    plt.legend(fontsize=13)
+    # Подписи над точками
+    for i, val in enumerate(sales):
+        plt.annotate(f'{int(val):,}'.replace(',', ' '), (x[i], sales[i]), textcoords="offset points", xytext=(0,8), ha='center', fontsize=12)
+    for i, val in enumerate(revenue):
+        plt.annotate(f'{int(val):,}'.replace(',', ' '), (x[i], revenue[i]), textcoords="offset points", xytext=(0,8), ha='center', fontsize=12)
+    for i, val in enumerate(profit):
+        plt.annotate(f'{int(val):,}'.replace(',', ' '), (x[i], profit[i]), textcoords="offset points", xytext=(0,8), ha='center', fontsize=12)
+    plt.tight_layout()
+    tmpfile = tempfile.NamedTemporaryFile(suffix='.png', prefix=filename_prefix, delete=False)
+    plt.savefig(tmpfile.name)
+    plt.close()
+    return tmpfile.name
+
+@dp.message(lambda message: message.text and message.text.strip(), UserStates.waiting_for_product)
+async def handle_product_article(message: types.Message, state: FSMContext):
+    try:
+        user_id = message.from_user.id
+        article = message.text.strip()
+        logger.info(f"User {user_id} is waiting for product analysis")
+
+        # Проверяем подписку
+        can_perform = subscription_manager.can_perform_action(user_id, 'product_analysis')
+        if not can_perform:
+            await message.answer("❌ У вас нет активной подписки или превышен лимит действий", reply_markup=main_menu_kb())
+            await state.clear()
+            return
+
+        await message.answer("⏳ Выполняется анализ артикула, подождите...")
+        product_info = await get_wb_product_info(article)
+        if not product_info:
+            await message.answer("❌ Не удалось получить информацию по артикулу. Проверьте правильность артикула.", reply_markup=main_menu_kb())
+            await state.clear()
+            return
+        result = await format_product_analysis(product_info, article)
+
+        # --- Построение и отправка графиков ---
+        daily_sales = product_info['sales']['today']
+        used_estimation = False
+        if not daily_sales or daily_sales == 0:
+            total_sales = product_info['sales'].get('total', 0)
+            feedbacks = product_info.get('feedbacks', 0)
+            estimated_total_sales = feedbacks * 30
+            total_sales = max(total_sales, estimated_total_sales)
+            daily_sales = max(1, round(total_sales / 365)) if total_sales > 0 else 0
+            used_estimation = True
+        week_sales = daily_sales * 7 if not used_estimation else round(total_sales / 52)
+        month_sales = daily_sales * 30 if not used_estimation else round(total_sales / 12)
+        price = product_info['price']['current']
+        commission = 0.15
+        daily_revenue = daily_sales * price
+        week_revenue = week_sales * price
+        month_revenue = month_sales * price
+        daily_profit = int(daily_revenue * (1 - commission))
+        week_profit = int(week_revenue * (1 - commission))
+        month_profit = int(month_revenue * (1 - commission))
+        # Графики
+        sales_plot = build_area_chart(['Сутки', 'Неделя', 'Месяц'], [daily_sales, week_sales, month_sales], [daily_revenue, week_revenue, month_revenue], [daily_profit, week_profit, month_profit], f'Прогноз продаж {article}', 'sales_')
+        revenue_plot = build_area_chart(['Сутки', 'Неделя', 'Месяц'], [daily_sales, week_sales, month_sales], [daily_revenue, week_revenue, month_revenue], [daily_profit, week_profit, month_profit], f'Прогноз выручки {article}', 'revenue_')
+        profit_plot = build_area_chart(['Сутки', 'Неделя', 'Месяц'], [daily_sales, week_sales, month_sales], [daily_revenue, week_revenue, month_revenue], [daily_profit, week_profit, month_profit], f'Прогноз прибыли {article}', 'profit_')
+        # Отправка графиков
+        await bot.send_photo(message.chat.id, FSInputFile(sales_plot), caption="График прогнозных продаж", reply_markup=None)
+        await bot.send_photo(message.chat.id, FSInputFile(revenue_plot), caption="График прогнозной выручки", reply_markup=None)
+        await bot.send_photo(message.chat.id, FSInputFile(profit_plot), caption="График прогнозной прибыли", reply_markup=None)
+        # Текстовый анализ
+        await bot.send_message(message.chat.id, result, parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_kb())
+
+        # --- Визуализация рекламы/глобального поиска ---
+        # Автоматически запускаем глобальный поиск по названию товара
+        try:
+            search_query = product_info.get('name') or product_info.get('brand') or article
+            search_results = await global_search_serper_detailed(search_query)
+            mentions = search_results.get('results', [])
+        except Exception as search_err:
+            logger.error(f"Global search error: {search_err}")
+            mentions = []
+        chart_path = None
+        if mentions:
+            platforms = [m.get('site', 'Неизвестно') for m in mentions]
+            revenues = [m.get('approx_revenue', 0) for m in mentions]
+            # График по выручке
+            chart_path = build_area_chart(platforms, revenues, revenues, revenues, f'Потенциальная выручка по площадкам', 'adv_')
+            await bot.send_photo(message.chat.id, FSInputFile(chart_path), caption="Потенциальная выручка по площадкам (сторонняя реклама)")
+        else:
+            await bot.send_message(message.chat.id, "Нет данных о сторонней рекламе или продвижении в соцсетях.")
+
+        # --- ДОБАВЛЯЕМ Instagram-поиск по хэштегу, если нет instagram.com ---
+        if not any('instagram.com' in m.get('site', '') for m in mentions):
+            insta_posts = search_instagram_by_hashtag(article)
+            if product_info.get('brand'):
+                insta_posts += search_instagram_by_hashtag(product_info['brand'])
+            if insta_posts:
+                mentions.extend(insta_posts)
+                # Перестроить график с учетом новых данных
+                platforms = [m.get('site', 'Неизвестно') for m in mentions]
+                revenues = [m.get('approx_revenue', 0) for m in mentions]
+                chart_path = build_area_chart(platforms, revenues, revenues, revenues, f'Потенциальная выручка по площадкам', 'adv_')
+                await bot.send_photo(message.chat.id, FSInputFile(chart_path), caption="Потенциальная выручка по площадкам (Instagram)")
+
+        # --- PDF-отчёт по глобальному поиску ---
+        try:
+            pdf_path = generate_global_search_pdf(article, mentions, chart_path)
+            await bot.send_document(message.chat.id, FSInputFile(pdf_path), caption="PDF-отчёт по глобальному поиску по артикулу")
+        except Exception as pdf_err:
+            logger.error(f"PDF error: {pdf_err}")
+            await bot.send_message(message.chat.id, f"❌ Ошибка при формировании PDF-отчёта: {pdf_err}")
+        await state.clear()
+
+        # --- Встраиваем в handle_product_article после основного поиска ---
+        # После получения mentions:
+        # if not any('instagram.com' in m.get('site', '') for m in mentions):
+        #     hashtag = article  # или product_info['brand']
+        #     insta_posts = search_instagram_by_hashtag(hashtag)
+        #     mentions.extend(insta_posts)
+    except Exception as e:
+        logger.error(f"Error in handle_product_article: {str(e)}")
+        await message.answer("❌ Произошла ошибка при анализе артикула.", reply_markup=main_menu_kb())
+        await state.clear()
 
 # Добавляем периодическую проверку истекающих подписок
 async def check_expiring_subscriptions():
@@ -1031,10 +1331,26 @@ async def check_expiring_subscriptions():
 async def format_product_analysis(product_info, article):
     """Форматирует результаты анализа товара."""
     
-    # Рассчитываем примерные показатели
+    # Получаем продажи за сутки
     daily_sales = product_info['sales']['today']
-    estimated_week = daily_sales * 7
-    estimated_month = daily_sales * 30
+    used_estimation = False
+    # Пробуем альтернативные источники, если нет sales_today
+    if not daily_sales or daily_sales == 0:
+        total_sales = product_info['sales'].get('total', 0)
+        sales_per_month = product_info.get('salesPerMonth', 0)
+        feedbacks = product_info.get('feedbacks', 0)
+        # Оценка по отзывам: 1 отзыв ≈ 30 продаж за всё время
+        estimated_total_sales = feedbacks * 30
+        # Если total_sales уже есть и больше — используем его
+        total_sales = max(total_sales, estimated_total_sales)
+        # Оценка: за месяц — 1/12, за неделю — 1/52, за сутки — 1/365
+        estimated_month = round(total_sales / 12)
+        estimated_week = round(total_sales / 52)
+        daily_sales = max(1, round(total_sales / 365)) if total_sales > 0 else 0
+        used_estimation = True
+    else:
+        estimated_week = daily_sales * 7
+        estimated_month = daily_sales * 30
     
     daily_revenue = daily_sales * product_info['price']['current']
     estimated_week_revenue = estimated_week * product_info['price']['current']
@@ -1045,6 +1361,11 @@ async def format_product_analysis(product_info, article):
     daily_profit = daily_revenue * profit_margin
     estimated_week_profit = estimated_week_revenue * profit_margin
     estimated_month_profit = estimated_month_revenue * profit_margin
+
+    # Корректная обработка рейтинга
+    rating = product_info['rating']
+    if rating > 5:
+        rating = rating / 10
     
     result = (
         f"📊 *Анализ товара {article}*\n\n"
@@ -1059,7 +1380,7 @@ async def format_product_analysis(product_info, article):
         result += f" (-{product_info['price']['discount']}% от {product_info['price']['original']}₽)"
     
     result += (
-        f"\n⭐ Рейтинг: {product_info['rating']:.1f}/5\n"
+        f"\n⭐ Рейтинг: {rating:.1f}/5\n"
         f"📝 Отзывов: {product_info['feedbacks']}\n"
         f"\n*Наличие на складах:*\n"
         f"📦 Всего: {product_info['stocks']['total']} шт.\n"
@@ -1072,40 +1393,159 @@ async def format_product_analysis(product_info, article):
             if qty > 0:
                 result += f"• {size}: {qty} шт.\n"
     
+    # Продажи и выручка
+    if daily_sales == 0:
+        result += (
+            f"\n*Продажи и выручка:*\n"
+            f"❗ Нет данных о продажах за сутки.\n"
+            f"💰 Выручка за сутки: 0₽\n"
+            f"💎 Прибыль за сутки: 0₽\n"
+        )
+        week_note = "❗ Нет данных для прогноза."
+        month_note = "❗ Нет данных для прогноза."
+    else:
+        result += (
+            f"\n*Продажи и выручка:*\n"
+            f"📈 Продажи за сутки: {daily_sales} шт.\n"
+            f"💰 Выручка за сутки: {daily_revenue:,.0f}₽\n"
+            f"💎 Прибыль за сутки: {daily_profit:,.0f}₽\n"
+        )
+        week_note = ""
+        month_note = ""
+    
+    # Прогноз на неделю
     result += (
-        f"\n*Продажи и выручка:*\n"
-        f"📈 Продажи за сутки: {daily_sales} шт.\n"
-        f"💰 Выручка за сутки: {daily_revenue:,.0f}₽\n"
-        f"💎 Прибыль за сутки: {daily_profit:,.0f}₽\n\n"
-        f"*Прогноз на неделю:*\n"
+        f"\n*Прогноз на неделю:*\n"
         f"📈 Продажи: ~{estimated_week} шт.\n"
         f"💰 Выручка: ~{estimated_week_revenue:,.0f}₽\n"
-        f"💎 Прибыль: ~{estimated_week_profit:,.0f}₽\n\n"
-        f"*Прогноз на месяц:*\n"
+        f"💎 Прибыль: ~{estimated_week_profit:,.0f}₽\n"
+    )
+    if week_note:
+        result += week_note + "\n"
+    
+    # Прогноз на месяц
+    result += (
+        f"\n*Прогноз на месяц:*\n"
         f"📈 Продажи: ~{estimated_month} шт.\n"
         f"💰 Выручка: ~{estimated_month_revenue:,.0f}₽\n"
         f"💎 Прибыль: ~{estimated_month_profit:,.0f}₽\n"
     )
+    if month_note:
+        result += month_note + "\n"
+    
+    # Пояснение, если использована оценка
+    if used_estimation:
+        result += ("\n_Данные по продажам оценочные, рассчитаны на основе количества отзывов и средней конверсии Wildberries. Реальные значения могут отличаться._\n")
     
     # Добавляем рекомендации
     recommendations = []
-    if product_info['rating'] < 4:
-        recommendations.append("Улучшить качество товара и обслуживания")
+    if rating < 4:
+        recommendations.append("\n💡 *Улучшить качество товара и обслуживания*\n- Проанализируйте отзывы покупателей: обратите внимание на повторяющиеся жалобы и пожелания.\n- Внедрите контроль качества на всех этапах производства и упаковки.\n- Улучшите сервис: быстрая доставка, вежливое общение, решение проблем клиентов.")
     if product_info['feedbacks'] < 100:
-        recommendations.append("Увеличить количество отзывов")
+        recommendations.append("\n💡 *Увеличить количество отзывов*\n- Просите довольных клиентов оставлять отзывы, предлагайте бонусы или скидки за обратную связь.\n- Используйте QR-коды на упаковке для быстрого перехода к форме отзыва.\n- Отвечайте на все отзывы — это повышает доверие новых покупателей.")
     if product_info['stocks']['total'] < 10:
-        recommendations.append("Пополнить остатки товара")
+        recommendations.append("\n💡 *Пополнить остатки товара*\n- Следите за остатками на складе, чтобы не терять продажи из-за отсутствия товара.\n- Планируйте закупки заранее, особенно перед сезоном повышенного спроса.\n- Используйте автоматические уведомления о низких остатках.")
     if product_info['price']['discount'] > 30:
-        recommendations.append("Проанализировать ценовую политику")
-    if product_info['sales']['today'] == 0 and product_info['stocks']['total'] > 0:
-        recommendations.append("Проработать маркетинговую стратегию")
-    
-    if recommendations:
-        result += "\n*Рекомендации:*\n"
-        for rec in recommendations:
-            result += f"💡 {rec}\n"
+        recommendations.append("\n💡 *Проанализировать ценовую политику*\n- Сравните цены с конкурентами: возможно, скидка слишком велика и снижает вашу прибыль.\n- Используйте акции и скидки осознанно — для привлечения новых клиентов или распродажи остатков.\n- Тестируйте разные уровни скидок и отслеживайте их влияние на продажи.")
+    if daily_sales == 0 and product_info['stocks']['total'] > 0:
+        recommendations.append("\n💡 *Проработать маркетинговую стратегию*\n- Запустите рекламу в социальных сетях и на маркетплейсах.\n- Используйте красивые фото и видео, расскажите историю бренда.\n- Сотрудничайте с блогерами и лидерами мнений.\n- Проведите анализ целевой аудитории и настройте таргетированную рекламу.")
+    if not recommendations:
+        recommendations.append("\n✅ Ваш товар показывает хорошие результаты! Продолжайте следить за качеством и развивайте маркетинг для дальнейшего роста.")
+    result += "\n*Рекомендации:* " + "\n".join(recommendations)
     
     return result
+
+def generate_global_search_pdf(article, search_results, chart_path=None):
+    import os
+    # Логируем все площадки для диагностики
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"PDF: platforms in mentions: {[item.get('site', '') for item in search_results]}")
+    pdf = FPDF()
+    # Регистрируем шрифт DejaVuSans для поддержки кириллицы
+    font_path = os.path.join(os.path.dirname(__file__), 'DejaVuSans.ttf')
+    pdf.add_font('DejaVu', '', font_path, uni=True)
+    pdf.add_font('DejaVu', 'B', font_path, uni=True)
+    pdf.add_page()
+    pdf.set_font('DejaVu', 'B', 18)
+    pdf.cell(0, 15, f'Глобальный поиск по артикулу {article}', ln=1, align='C')
+    pdf.set_font('DejaVu', '', 12)
+    pdf.cell(0, 10, f'Дата анализа: {datetime.now().strftime("%d.%m.%Y %H:%M")}', ln=1, align='C')
+    pdf.ln(5)
+    if not search_results:
+        pdf.set_font('DejaVu', '', 14)
+        pdf.set_text_color(200, 0, 0)
+        pdf.multi_cell(0, 10, 'Стороннего продвижения не обнаружено. Товар продвигается органически или не найден в соцсетях.', align='C')
+        pdf.set_text_color(0, 0, 0)
+    else:
+        pdf.set_font('DejaVu', 'B', 13)
+        pdf.cell(0, 10, 'Таблица упоминаний:', ln=1)
+        pdf.set_font('DejaVu', '', 11)
+        col_widths = [32, 60, 22, 22, 28, 28, 18]
+        headers = ['Площадка', 'Ссылка', 'Лайки', 'Просмотры', 'Аудитория', 'Выручка', 'Рост %']
+        for i, h in enumerate(headers):
+            pdf.cell(col_widths[i], 8, h, border=1, align='C')
+        pdf.ln()
+        for item in search_results:
+            site = item.get('site', '')[:15]
+            link = item.get('link', '')
+            likes = item.get('likes', 0)
+            views = item.get('views', 0)
+            # Для Instagram — если нет данных, явно пишем причину
+            if 'instagram.com' in site and (likes == 0 and views == 0):
+                likes_str = 'нет данных'
+                views_str = 'нет данных'
+            else:
+                likes_str = str(likes)
+                views_str = str(views)
+            pdf.cell(col_widths[0], 8, site, border=1)
+            # Ссылка — обрезаем до 40 символов с ...
+            short_link = link if len(link) <= 40 else link[:37] + '...'
+            pdf.cell(col_widths[1], 8, short_link, border=1)
+            pdf.cell(col_widths[2], 8, likes_str, border=1, align='C')
+            pdf.cell(col_widths[3], 8, views_str, border=1, align='C')
+            pdf.cell(col_widths[4], 8, str(item.get('approx_clients', 0)), border=1, align='C')
+            pdf.cell(col_widths[5], 8, str(item.get('approx_revenue', 0)), border=1, align='C')
+            pdf.cell(col_widths[6], 8, f"{item.get('growth_percent', 0):.1f}", border=1, align='C')
+            pdf.ln()
+        pdf.ln(5)
+        if chart_path and os.path.exists(chart_path):
+            pdf.set_font('DejaVu', 'B', 12)
+            pdf.cell(0, 10, 'График по данным глобального поиска:', ln=1)
+            pdf.image(chart_path, x=20, w=170)
+        # Сноска для Instagram
+        pdf.set_font('DejaVu', '', 9)
+        pdf.set_text_color(120, 120, 120)
+        pdf.multi_cell(0, 7, 'Для Instagram часто невозможно получить лайки и просмотры из-за ограничений платформы. В таких случаях в таблице указано: нет данных (Instagram защищён).', align='L')
+        pdf.set_text_color(0, 0, 0)
+    tmpfile = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
+    pdf.output(tmpfile.name)
+    return tmpfile.name
+
+def search_instagram_by_hashtag(hashtag, max_posts=5):
+    L = instaloader.Instaloader()
+    username = "upir.worldwide"
+    password = "GGrenki_1901"
+    try:
+        L.login(username, password)
+        posts = instaloader.Hashtag.from_name(L.context, hashtag).get_posts()
+    except Exception as e:
+        print(f"Ошибка Instaloader: {e}")
+        return []
+    results = []
+    for i, post in enumerate(posts):
+        if i >= max_posts:
+            break
+        results.append({
+            'site': 'instagram.com',
+            'link': f'https://www.instagram.com/p/{post.shortcode}/',
+            'likes': post.likes,
+            'views': post.video_view_count if post.is_video else 0,
+            'approx_clients': int(post.likes * 0.1 + (post.video_view_count or 0) * 0.05),
+            'approx_revenue': int((post.likes * 0.1 + (post.video_view_count or 0) * 0.05) * 500),
+            'growth_percent': 0,
+        })
+    return results
 
 # Добавляем запуск проверки в main
 async def main():
