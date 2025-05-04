@@ -1110,23 +1110,67 @@ def build_platform_distribution_chart(platforms, activities, title, filename_pre
     return tmpfile.name
 
 def build_revenue_comparison_chart(platforms, revenues, title, filename_prefix):
-    """Создает столбчатую диаграмму сравнения выручки по платформам."""
+    """Создает график сравнения выручки по площадкам."""
+    # Сокращаем названия площадок
+    shortened_platforms = []
+    platform_names = {}
+    for i, platform in enumerate(platforms):
+        # Убираем www. и .com из названий
+        full_name = platform.replace('www.', '').replace('.com', '')
+        # Создаем короткое имя
+        if 'instagram' in full_name.lower():
+            short_name = 'IG'
+        elif 'vk.com' in full_name.lower():
+            short_name = 'VK'
+        elif 'facebook' in full_name.lower():
+            short_name = 'FB'
+        elif 'telegram' in full_name.lower() or 't.me' in full_name.lower():
+            short_name = 'TG'
+        elif 'twitter' in full_name.lower():
+            short_name = 'TW'
+        else:
+            short_name = f'P{i+1}'
+        
+        platform_names[short_name] = full_name
+        shortened_platforms.append(short_name)
+
     plt.figure(figsize=(10, 6))
-    bars = plt.bar(platforms, revenues, color='#4e79a7')
+    x = np.arange(len(shortened_platforms))
+    
+    # Создаем три линии для продаж, выручки и прибыли
+    plt.plot(x, revenues, color='#4e79a7', linewidth=2.5, label='Выручка, ₽')
+    plt.fill_between(x, revenues, color='#4e79a7', alpha=0.18)
+    
+    # Настраиваем оси и подписи
+    plt.xticks(x, shortened_platforms, fontsize=12)
+    plt.yticks(fontsize=12)
     plt.title(title, fontsize=16)
-    plt.xticks(rotation=45, ha='right')
     plt.grid(axis='y', linestyle='--', alpha=0.5)
+    plt.legend(fontsize=12)
+
+    # Подписи значений над точками
+    for i, val in enumerate(revenues):
+        plt.annotate(f'{int(val):,}'.replace(',', ' '), 
+                    (x[i], revenues[i]), 
+                    textcoords="offset points", 
+                    xytext=(0,8), 
+                    ha='center', 
+                    fontsize=11)
+
+    # Добавляем легенду с расшифровкой площадок
+    legend_text = []
+    for short_name, full_name in platform_names.items():
+        legend_text.append(f'{short_name} - {full_name}')
     
-    # Добавляем значения над столбцами
-    for bar in bars:
-        height = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2., height,
-                f'{int(height):,}'.replace(',', ' '),
-                ha='center', va='bottom', fontsize=12)
-    
+    # Размещаем легенду под графиком
+    plt.figtext(0.05, 0.02, 'Расшифровка площадок:\n' + '\n'.join(legend_text),
+                fontsize=10, ha='left', va='bottom')
+
+    plt.subplots_adjust(bottom=0.25)  # Отступ снизу для легенды
     plt.tight_layout()
+    
     tmpfile = tempfile.NamedTemporaryFile(suffix='.png', prefix=filename_prefix, delete=False)
-    plt.savefig(tmpfile.name)
+    plt.savefig(tmpfile.name, dpi=300, bbox_inches='tight')
     plt.close()
     return tmpfile.name
 
@@ -1465,41 +1509,61 @@ async def handle_payment_amount(message: types.Message, state: FSMContext):
         await message.answer("❌ Пожалуйста, введите корректную сумму")
 
 def build_area_chart(labels, sales, revenue, profit, title, filename_prefix):
+    # Сокращаем названия площадок, если это график выручки по площадкам
+    if "площадкам" in title:
+        shortened_labels = []
+        for label in labels:
+            # Убираем www. и .com
+            label = label.replace('www.', '').replace('.com', '')
+            # Сокращаем названия популярных платформ
+            if 'instagram' in label.lower():
+                label = 'Instagram'
+            elif 'vk' in label.lower():
+                label = 'VK'
+            elif 'facebook' in label.lower():
+                label = 'FB'
+            elif 'telegram' in label.lower() or 't.me' in label.lower():
+                label = 'TG'
+            elif 'twitter' in label.lower():
+                label = 'Twitter'
+            shortened_labels.append(label)
+        labels = shortened_labels
+
     plt.figure(figsize=(10, 6))
     x = np.arange(len(labels))
-    width = 0.25
     
-    # Создаем три отдельных графика
-    plt.subplot(3, 1, 1)
-    plt.bar(x, sales, width, color='#4e79a7', label='Продажи, шт.')
-    plt.title('Продажи', fontsize=12)
-    plt.xticks(x, labels, fontsize=10)
-    plt.grid(axis='y', linestyle='--', alpha=0.5)
-    for i, val in enumerate(sales):
-        plt.annotate(f'{int(val):,}'.replace(',', ' '), (x[i], val), 
-                    textcoords="offset points", xytext=(0,5), ha='center', fontsize=9)
+    # Создаем три линии на одном графике
+    plt.plot(x, sales, '-', color='#4e79a7', linewidth=2, label='Продажи, шт.')
+    plt.plot(x, revenue, '-', color='#f28e2b', linewidth=2, label='Выручка, ₽')
+    plt.plot(x, profit, '-', color='#e15759', linewidth=2, label='Прибыль, ₽')
     
-    plt.subplot(3, 1, 2)
-    plt.bar(x, revenue, width, color='#f28e2b', label='Выручка, ₽')
-    plt.title('Выручка', fontsize=12)
-    plt.xticks(x, labels, fontsize=10)
-    plt.grid(axis='y', linestyle='--', alpha=0.5)
-    for i, val in enumerate(revenue):
-        plt.annotate(f'{int(val):,}'.replace(',', ' '), (x[i], val), 
-                    textcoords="offset points", xytext=(0,5), ha='center', fontsize=9)
+    # Добавляем заливку под линиями
+    plt.fill_between(x, sales, alpha=0.1, color='#4e79a7')
+    plt.fill_between(x, revenue, alpha=0.1, color='#f28e2b')
+    plt.fill_between(x, profit, alpha=0.1, color='#e15759')
     
-    plt.subplot(3, 1, 3)
-    plt.bar(x, profit, width, color='#e15759', label='Прибыль, ₽')
-    plt.title('Прибыль', fontsize=12)
-    plt.xticks(x, labels, fontsize=10)
-    plt.grid(axis='y', linestyle='--', alpha=0.5)
-    for i, val in enumerate(profit):
-        plt.annotate(f'{int(val):,}'.replace(',', ' '), (x[i], val), 
-                    textcoords="offset points", xytext=(0,5), ha='center', fontsize=9)
+    # Настройки графика
+    plt.title(title, fontsize=14, pad=20)
+    plt.xticks(x, labels, fontsize=12, rotation=45 if "площадкам" in title else 0)
+    plt.yticks(fontsize=12)
+    plt.grid(True, linestyle='--', alpha=0.3)
+    plt.legend(fontsize=10, loc='upper left')
+    
+    # Добавляем значения над точками
+    for i, (s, r, p) in enumerate(zip(sales, revenue, profit)):
+        plt.annotate(f'{int(s):,}'.replace(',', ' '), (x[i], s), 
+                    textcoords="offset points", xytext=(0,10), 
+                    ha='center', fontsize=10)
+        plt.annotate(f'{int(r):,}'.replace(',', ' '), (x[i], r), 
+                    textcoords="offset points", xytext=(0,10), 
+                    ha='center', fontsize=10)
+        plt.annotate(f'{int(p):,}'.replace(',', ' '), (x[i], p), 
+                    textcoords="offset points", xytext=(0,10), 
+                    ha='center', fontsize=10)
     
     plt.tight_layout()
     tmpfile = tempfile.NamedTemporaryFile(suffix='.png', prefix=filename_prefix, delete=False)
-    plt.savefig(tmpfile.name)
+    plt.savefig(tmpfile.name, dpi=300, bbox_inches='tight')
     plt.close()
     return tmpfile.name
 
@@ -1853,21 +1917,21 @@ async def format_product_analysis(product_info, article):
 
 def generate_global_search_pdf(article, search_results, chart_path=None):
     import os
-    # Логируем все площадки для диагностики
-    import logging
     logger = logging.getLogger(__name__)
     logger.info(f"PDF: platforms in mentions: {[item.get('site', '') for item in search_results]}")
+    
     pdf = FPDF()
-    # Регистрируем шрифт DejaVuSans для поддержки кириллицы
     font_path = os.path.join(os.path.dirname(__file__), 'DejaVuSans.ttf')
     pdf.add_font('DejaVu', '', font_path, uni=True)
     pdf.add_font('DejaVu', 'B', font_path, uni=True)
+    
     pdf.add_page()
     pdf.set_font('DejaVu', 'B', 18)
     pdf.cell(0, 15, f'Глобальный поиск по артикулу {article}', ln=1, align='C')
     pdf.set_font('DejaVu', '', 12)
     pdf.cell(0, 10, f'Дата анализа: {datetime.now().strftime("%d.%m.%Y %H:%M")}', ln=1, align='C')
     pdf.ln(5)
+    
     if not search_results:
         pdf.set_font('DejaVu', '', 14)
         pdf.set_text_color(200, 0, 0)
@@ -1877,43 +1941,174 @@ def generate_global_search_pdf(article, search_results, chart_path=None):
         pdf.set_font('DejaVu', 'B', 13)
         pdf.cell(0, 10, 'Таблица упоминаний:', ln=1)
         pdf.set_font('DejaVu', '', 11)
-        col_widths = [32, 60, 22, 22, 28, 28, 18]
-        headers = ['Площадка', 'Ссылка', 'Лайки', 'Просмотры', 'Аудитория', 'Выручка', 'Рост %']
+        
+        # Ширины столбцов
+        col_widths = [25, 25, 25, 35, 35, 35]  # Общая ширина ~180
+        headers = ['Площадка', 'Лайки', 'Просмотры', 'Аудитория', 'Выручка', 'Рост %']
+        
+        # Заголовки таблицы
         for i, h in enumerate(headers):
             pdf.cell(col_widths[i], 8, h, border=1, align='C')
         pdf.ln()
+        
+        # Сбор статистики для анализа
+        platform_stats = {}
+        total_likes = 0
+        total_views = 0
+        total_revenue = 0
+        total_audience = 0
+        
+        # Данные таблицы
         for item in search_results:
-            site = item.get('site', '')[:15]
-            link = item.get('link', '')
-            likes = item.get('likes', 0)
-            views = item.get('views', 0)
-            # Для Instagram — если нет данных, явно пишем причину
-            if 'instagram.com' in site and (likes == 0 and views == 0):
-                likes_str = 'нет данных'
-                views_str = 'нет данных'
-            else:
-                likes_str = str(likes)
-                views_str = str(views)
-            pdf.cell(col_widths[0], 8, site, border=1)
-            # Ссылка — обрезаем до 40 символов с ...
-            short_link = link if len(link) <= 40 else link[:37] + '...'
-            pdf.cell(col_widths[1], 8, short_link, border=1)
-            pdf.cell(col_widths[2], 8, likes_str, border=1, align='C')
-            pdf.cell(col_widths[3], 8, views_str, border=1, align='C')
-            pdf.cell(col_widths[4], 8, str(item.get('approx_clients', 0)), border=1, align='C')
-            pdf.cell(col_widths[5], 8, str(item.get('approx_revenue', 0)), border=1, align='C')
-            pdf.cell(col_widths[6], 8, f"{item.get('growth_percent', 0):.1f}", border=1, align='C')
+            # Сокращаем название площадки
+            site = item.get('site', '').replace('www.', '').replace('.com', '')
+            if 'instagram' in site.lower():
+                site = 'Instagram'
+            elif 'vk' in site.lower():
+                site = 'VK'
+            elif 'facebook' in site.lower():
+                site = 'FB'
+            elif 'telegram' in site.lower() or 't.me' in site.lower():
+                site = 'TG'
+            elif 'twitter' in site.lower():
+                site = 'Twitter'
+            
+            # Собираем статистику по площадкам
+            if site not in platform_stats:
+                platform_stats[site] = {
+                    'likes': 0,
+                    'views': 0,
+                    'revenue': 0,
+                    'audience': 0,
+                    'posts': 0
+                }
+            platform_stats[site]['posts'] += 1
+            platform_stats[site]['likes'] += item.get('likes', 0)
+            platform_stats[site]['views'] += item.get('views', 0)
+            platform_stats[site]['revenue'] += item.get('approx_revenue', 0)
+            platform_stats[site]['audience'] += item.get('approx_clients', 0)
+            
+            # Общая статистика
+            total_likes += item.get('likes', 0)
+            total_views += item.get('views', 0)
+            total_revenue += item.get('approx_revenue', 0)
+            total_audience += item.get('approx_clients', 0)
+            
+            # Форматируем числа
+            likes = f"{item.get('likes', 0):,}".replace(',', ' ')
+            views = f"{item.get('views', 0):,}".replace(',', ' ')
+            audience = f"{item.get('approx_clients', 0):,}".replace(',', ' ')
+            revenue = f"{item.get('approx_revenue', 0):,}".replace(',', ' ')
+            growth = f"{item.get('growth_percent', 0):.1f}%"
+            
+            # Выводим строку таблицы
+            pdf.cell(col_widths[0], 8, site, border=1, align='C')
+            pdf.cell(col_widths[1], 8, likes, border=1, align='C')
+            pdf.cell(col_widths[2], 8, views, border=1, align='C')
+            pdf.cell(col_widths[3], 8, audience, border=1, align='C')
+            pdf.cell(col_widths[4], 8, revenue, border=1, align='C')
+            pdf.cell(col_widths[5], 8, growth, border=1, align='C')
             pdf.ln()
+        
         pdf.ln(5)
         if chart_path and os.path.exists(chart_path):
             pdf.set_font('DejaVu', 'B', 12)
             pdf.cell(0, 10, 'График по данным глобального поиска:', ln=1)
             pdf.image(chart_path, x=20, w=170)
-        # Сноска для Instagram
-        pdf.set_font('DejaVu', '', 9)
-        pdf.set_text_color(120, 120, 120)
-        pdf.multi_cell(0, 7, 'Для Instagram часто невозможно получить лайки и просмотры из-за ограничений платформы. В таких случаях в таблице указано: нет данных (Instagram защищён).', align='L')
-        pdf.set_text_color(0, 0, 0)
+            pdf.ln(10)
+        
+        # Добавляем экспертный анализ
+        pdf.add_page()
+        pdf.set_font('DejaVu', 'B', 14)
+        pdf.cell(0, 10, 'Экспертный анализ:', ln=1)
+        pdf.ln(5)
+        
+        # Общая статистика
+        pdf.set_font('DejaVu', 'B', 12)
+        pdf.cell(0, 8, 'Общие показатели:', ln=1)
+        pdf.set_font('DejaVu', '', 11)
+        pdf.multi_cell(0, 6, f"""• Всего упоминаний: {len(search_results)}
+• Суммарные лайки: {total_likes:,}
+• Суммарные просмотры: {total_views:,}
+• Потенциальная аудитория: {total_audience:,}
+• Прогнозируемая выручка: {total_revenue:,} ₽""".replace(',', ' '))
+        pdf.ln(5)
+        
+        # Анализ по площадкам
+        pdf.set_font('DejaVu', 'B', 12)
+        pdf.cell(0, 8, 'Анализ по площадкам:', ln=1)
+        pdf.set_font('DejaVu', '', 11)
+        
+        # Находим лучшую площадку
+        best_platform = max(platform_stats.items(), key=lambda x: x[1]['revenue'])
+        engagement_rates = {
+            platform: (stats['likes'] + stats['views']) / stats['posts'] if stats['posts'] > 0 else 0
+            for platform, stats in platform_stats.items()
+        }
+        best_engagement = max(engagement_rates.items(), key=lambda x: x[1])
+        
+        for platform, stats in platform_stats.items():
+            avg_engagement = (stats['likes'] + stats['views']) / stats['posts'] if stats['posts'] > 0 else 0
+            pdf.multi_cell(0, 6, f"""• {platform}:
+  - Количество постов: {stats['posts']}
+  - Средний охват: {int(stats['views'] / stats['posts']):,} просмотров
+  - Средний engagement rate: {(stats['likes'] / stats['views'] * 100 if stats['views'] > 0 else 0):.1f}%
+  - Потенциальная выручка: {stats['revenue']:,} ₽""".replace(',', ' '))
+            pdf.ln(2)
+        
+        # Рекомендации
+        pdf.ln(5)
+        pdf.set_font('DejaVu', 'B', 12)
+        pdf.cell(0, 8, 'Рекомендации по продвижению:', ln=1)
+        pdf.set_font('DejaVu', '', 11)
+        
+        # Формируем рекомендации на основе анализа
+        recommendations = []
+        
+        # Рекомендация по лучшей площадке
+        recommendations.append(f"• Сфокусировать основные усилия на {best_platform[0]} - показывает наилучшую конверсию и потенциальную выручку ({best_platform[1]['revenue']:,} ₽).")
+        
+        # Рекомендация по типу контента
+        if total_views > 10000:
+            recommendations.append("• Создавать больше видео-контента - аудитория активно взаимодействует с визуальным контентом.")
+        else:
+            recommendations.append("• Увеличить частоту публикаций и разнообразить контент для повышения охвата.")
+        
+        # Рекомендация по бюджету
+        avg_revenue_per_post = total_revenue / len(search_results) if search_results else 0
+        if avg_revenue_per_post > 50000:
+            recommendations.append(f"• Увеличить рекламный бюджет - высокая окупаемость ({int(avg_revenue_per_post):,} ₽ на пост).")
+        else:
+            recommendations.append("• Начать с небольшого тестового бюджета для оценки эффективности рекламных кампаний.")
+        
+        # Рекомендация по engagement
+        recommendations.append(f"• Использовать механики {best_engagement[0]} для повышения вовлеченности - показывает лучший engagement rate.")
+        
+        # Рекомендация по масштабированию
+        if len(platform_stats) < 3:
+            recommendations.append("• Расширить присутствие на других площадках для увеличения охвата целевой аудитории.")
+        
+        # Выводим рекомендации
+        for rec in recommendations:
+            pdf.multi_cell(0, 6, rec)
+            pdf.ln(2)
+        
+        # Заключение
+        pdf.ln(5)
+        pdf.set_font('DejaVu', 'B', 12)
+        pdf.cell(0, 8, 'Заключение:', ln=1)
+        pdf.set_font('DejaVu', '', 11)
+        
+        conclusion = f"""На основе проведенного анализа товар показывает {'высокий' if total_revenue > 100000 else 'средний' if total_revenue > 50000 else 'низкий'} потенциал в социальных сетях. {'Рекомендуется активное масштабирование присутствия.' if total_revenue > 100000 else 'Требуется дополнительная работа над контентом и продвижением.' if total_revenue > 50000 else 'Необходимо пересмотреть стратегию продвижения и целевую аудиторию.'}
+
+Ключевые метрики для отслеживания:
+• Рост охвата и вовлеченности
+• Конверсия в продажи
+• ROI рекламных кампаний
+• Обратная связь от аудитории"""
+        
+        pdf.multi_cell(0, 6, conclusion)
+    
     tmpfile = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
     pdf.output(tmpfile.name)
     return tmpfile.name
