@@ -107,6 +107,10 @@ class UserStates(StatesGroup):
     waiting_for_search = State()
     viewing_search_results = State()
 
+class TrackingStates(StatesGroup):
+    waiting_for_article_to_add = State()
+    waiting_for_article_to_remove = State()
+
 # Приветственное сообщение
 WELCOME_MESSAGE = (
     "✨👋 *Добро пожаловать в WHITESAMURAI!* ✨\n\n"
@@ -133,14 +137,14 @@ WELCOME_MESSAGE = (
 
 # Клавиатура основного меню
 def main_menu_kb():
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+    keyboard = [
         [
             InlineKeyboardButton(text="📊 Анализ товара", callback_data="product_analysis"),
             InlineKeyboardButton(text="📈 Анализ ниши", callback_data="niche_analysis")
         ],
         [
             InlineKeyboardButton(text="🌐 Глобальный поиск", callback_data="product_search"),
-            InlineKeyboardButton(text="📱 Отслеживание", callback_data="track_item")
+            InlineKeyboardButton(text="📱 Отслеживание", callback_data="tracking")
         ],
         [
             InlineKeyboardButton(text="👤 Личный кабинет", callback_data="profile"),
@@ -153,8 +157,8 @@ def main_menu_kb():
         [
             InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")
         ]
-    ])
-    return keyboard
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 # Клавиатура "Назад"
 def back_keyboard():
@@ -214,20 +218,28 @@ async def profile_callback(callback_query: types.CallbackQuery):
     subscription_stats = subscription_manager.get_subscription_stats(user_id)
     
     subscription_info = "❌ Нет активной подписки"
-    if subscription_stats:
-        expiry_date = datetime.fromisoformat(subscription_stats['expiry_date'])
-        days_left = (expiry_date - datetime.now()).days
-        subscription_info = (
-            f"📅 *Текущая подписка:* {subscription}\n"
-            f"⏳ Осталось дней: {days_left}\n\n"
-            "*Лимиты:*\n"
-        )
-        for action, data in subscription_stats['actions'].items():
-            limit = "∞" if data['limit'] == float('inf') else data['limit']
-            subscription_info += f"• {action}: {data['used']}/{limit}\n"
+    if subscription_stats and subscription_stats.get('expiry_date'):
+        expiry_date_raw = subscription_stats['expiry_date']
+        try:
+            if isinstance(expiry_date_raw, str):
+                expiry_date = datetime.fromisoformat(expiry_date_raw)
+                days_left = (expiry_date - datetime.now()).days
+                subscription_info = (
+                    f"📅 Текущая подписка: {subscription}\n"
+                    f"⏳ Осталось дней: {days_left}\n\n"
+                    "Лимиты:\n"
+                )
+                for action, data in subscription_stats['actions'].items():
+                    limit = "∞" if data['limit'] == float('inf') else data['limit']
+                    subscription_info += f"• {action}: {data['used']}/{limit}\n"
+            else:
+                subscription_info = "❌ Ошибка получения информации о подписке"
+        except (ValueError, TypeError) as e:
+            logger.error(f"Error parsing expiry date: {e}")
+            subscription_info = "❌ Ошибка получения информации о подписке"
     
     profile_text = (
-        f"👤 *Личный кабинет*\n\n"
+        f"👤 Личный кабинет\n\n"
         f"💰 Баланс: {balance}₽\n"
         f"📊 Отслеживаемых товаров: {len(tracked_items)}\n\n"
         f"{subscription_info}"
@@ -244,7 +256,6 @@ async def profile_callback(callback_query: types.CallbackQuery):
     
     await callback_query.message.edit_text(
         profile_text,
-        parse_mode=ParseMode.MARKDOWN,
         reply_markup=keyboard
     )
 
@@ -426,17 +437,21 @@ async def profile_handler(message: types.Message):
     
     # Форматируем информацию о подписке
     subscription_info = "❌ Нет активной подписки"
-    if subscription_stats:
-        expiry_date = datetime.fromisoformat(subscription_stats['expiry_date'])
-        days_left = (expiry_date - datetime.now()).days
-        subscription_info = (
-            f"📅 *Текущая подписка:* {subscription}\n"
-            f"⏳ Осталось дней: {days_left}\n\n"
-            "*Лимиты:*\n"
-        )
-        for action, data in subscription_stats['actions'].items():
-            limit = "∞" if data['limit'] == float('inf') else data['limit']
-            subscription_info += f"• {action}: {data['used']}/{limit}\n"
+    if subscription_stats and subscription_stats.get('expiry_date'):
+        try:
+            expiry_date = datetime.fromisoformat(subscription_stats['expiry_date'])
+            days_left = (expiry_date - datetime.now()).days
+            subscription_info = (
+                f"📅 *Текущая подписка:* {subscription}\n"
+                f"⏳ Осталось дней: {days_left}\n\n"
+                "*Лимиты:*\n"
+            )
+            for action, data in subscription_stats['actions'].items():
+                limit = "∞" if data['limit'] == float('inf') else data['limit']
+                subscription_info += f"• {action}: {data['used']}/{limit}\n"
+        except (ValueError, TypeError) as e:
+            logger.error(f"Error parsing expiry date: {e}")
+            subscription_info = "❌ Ошибка получения информации о подписке"
     
     profile_text = (
         f"👤 *Личный кабинет*\n\n"
@@ -458,11 +473,15 @@ async def profile_handler(message: types.Message):
 @dp.callback_query(lambda c: c.data.startswith('confirm_payment_') or c.data.startswith('reject_payment_'))
 async def process_payment_confirmation(callback_query: types.CallbackQuery):
     try:
-        action, user_id, amount = callback_query.data.split('_')[1:]
-        user_id = int(user_id)
-        amount = float(amount)
+        # Новый разбор callback_data: confirm_payment_USERID_AMOUNT
+        parts = callback_query.data.split('_')
+        action = parts[0]  # confirm или reject
+        user_id = int(parts[2])
+        amount = float(parts[3])
+        logger.info(f"Payment confirmation: action={action}, user_id={user_id}, amount={amount}")
         
         if action == 'confirm':
+            # Пополнение баланса
             subscription_manager.update_balance(user_id, amount)
             await bot.send_message(
                 user_id,
@@ -531,14 +550,35 @@ async def handle_niche_analysis(callback_query: types.CallbackQuery, state: FSMC
             )
             return
         
-        await state.set_state(UserStates.waiting_for_niche)
+        # Создаем клавиатуру с популярными категориями
+        categories = [
+            "👕 Одежда и обувь",
+            "📱 Электроника",
+            "🏠 Дом и сад",
+            "👶 Детские товары",
+            "💄 Красота",
+            "🍽️ Продукты питания",
+            "🏋️ Спорт и отдых",
+            "📚 Книги",
+            "🎮 Игры и консоли",
+            "🎁 Подарки"
+        ]
+        
+        keyboard = []
+        for i in range(0, len(categories), 2):
+            row = []
+            if i < len(categories):
+                row.append(InlineKeyboardButton(text=categories[i], callback_data=f"niche_category_{i}"))
+            if i + 1 < len(categories):
+                row.append(InlineKeyboardButton(text=categories[i+1], callback_data=f"niche_category_{i+1}"))
+            keyboard.append(row)
+        keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_main")])
         
         await callback_query.message.edit_text(
-            "🔍 *Анализ ниши*\n\n"
-            "Отправьте ключевое слово для анализа ниши.\n"
-            "Например: детские игрушки",
+            "📈 *Анализ ниш*\n\n"
+            "Выберите интересующую категорию для анализа:",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=back_keyboard()
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
         )
         
     except Exception as e:
@@ -546,6 +586,90 @@ async def handle_niche_analysis(callback_query: types.CallbackQuery, state: FSMC
         await callback_query.answer(
             "Произошла ошибка. Пожалуйста, попробуйте позже.",
             show_alert=True
+        )
+
+@dp.callback_query(lambda c: c.data.startswith('niche_category_'))
+async def handle_category_selection(callback_query: types.CallbackQuery, state: FSMContext):
+    try:
+        category_index = int(callback_query.data.split('_')[-1])
+        categories = [
+            "Одежда и обувь",
+            "Электроника",
+            "Дом и сад",
+            "Детские товары",
+            "Красота",
+            "Продукты питания",
+            "Спорт и отдых",
+            "Книги",
+            "Игры и консоли",
+            "Подарки"
+        ]
+        selected_category = categories[category_index]
+        
+        # Сохраняем выбранную категорию в состоянии
+        await state.update_data(selected_category=selected_category)
+        
+        # Отправляем сообщение о начале анализа
+        status_message = await callback_query.message.edit_text(
+            f"🔄 Анализирую категорию: {selected_category}\n"
+            "Это может занять несколько минут..."
+        )
+        
+        # Создаем объект анализатора ниш
+        niche_analyzer = NicheAnalyzer()
+        
+        # Запускаем анализ
+        analysis_result = await niche_analyzer.analyze_category(selected_category)
+        
+        if not analysis_result:
+            await callback_query.message.edit_text(
+                "❌ Произошла ошибка при анализе категории. Попробуйте позже.",
+                reply_markup=back_keyboard()
+            )
+            return
+        
+        # Отправляем текстовый отчет
+        report = (
+            f"📊 *Анализ категории: {selected_category}*\n\n"
+            f"💰 *Объем рынка:* {analysis_result['market_volume']:,.0f} ₽\n"
+            f"📦 *Количество товаров:* {analysis_result['products_count']}\n"
+            f"💵 *Средняя цена:* {analysis_result['avg_price']:,.0f} ₽\n"
+            f"⭐ *Средний рейтинг:* {analysis_result['avg_rating']:.1f}\n\n"
+            f"📈 *Тренды:*\n"
+            f"• {analysis_result['trends']['sales_trend']} тренд продаж\n"
+            f"• {analysis_result['trends']['potential']} потенциал\n\n"
+            f"⚠️ *Риски:*\n"
+            f"• {', '.join(analysis_result['risks'])}\n\n"
+            f"💡 *Рекомендации:*\n"
+            f"• {', '.join(analysis_result['recommendations'])}"
+        )
+        
+        await callback_query.message.edit_text(
+            report,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=back_keyboard()
+        )
+        
+        # Отправляем графики
+        for chart_name, chart_path in analysis_result['charts'].items():
+            caption = {
+                'price_distribution': '📊 Распределение цен в категории',
+                'sales_volume': '📈 Объем продаж по месяцам',
+                'competition': '🎯 Уровень конкуренции'
+            }.get(chart_name, '')
+            
+            await callback_query.message.answer_photo(
+                FSInputFile(chart_path),
+                caption=caption
+            )
+            # Удаляем временный файл
+            os.remove(chart_path)
+        
+    except Exception as e:
+        logger.error(f"Error in category selection handler: {str(e)}")
+        await callback_query.message.edit_text(
+            "❌ Произошла ошибка при анализе категории. Попробуйте позже.",
+            reply_markup=back_keyboard()
         )
 
 def extract_likes_views(snippet):
@@ -2142,6 +2266,9 @@ def search_instagram_by_hashtag(hashtag, max_posts=5):
 async def main():
     logger.info("Starting bot...")
     
+    # Удаляем вебхук перед запуском
+    await bot.delete_webhook(drop_pending_updates=True)
+    
     # Запускаем проверку истекающих подписок
     asyncio.create_task(check_expiring_subscriptions())
     
@@ -2150,6 +2277,223 @@ async def main():
         await dp.start_polling(bot)
     finally:
         await bot.session.close()
+
+@dp.callback_query(lambda c: c.data == "stats")
+async def stats_callback(callback_query: types.CallbackQuery):
+    try:
+        user_id = callback_query.from_user.id
+        logger.info(f"User {user_id} requested subscription stats")
+        
+        # Получаем статистику подписки
+        subscription_stats = subscription_manager.get_subscription_stats(user_id)
+        if not subscription_stats:
+            await callback_query.message.answer(
+                "❌ Не удалось получить информацию о подписке",
+                reply_markup=main_menu_kb()
+            )
+            return
+
+        subscription_type = subscription_stats.get('subscription_type', 'free')
+        expiry_date = subscription_stats.get('expiry_date')
+        days_left = None
+        if expiry_date:
+            try:
+                expiry_dt = datetime.fromisoformat(expiry_date)
+                days_left = (expiry_dt - datetime.now()).days
+            except Exception:
+                days_left = None
+
+        # Получаем отслеживаемые товары
+        tracked_items = subscription_manager.get_tracked_items(user_id)
+        tracked_text = ""
+        if tracked_items:
+            tracked_text = "\n🔗 Отслеживаемые товары:\n"
+            for item in tracked_items[:10]:  # Показываем только первые 10
+                sales_today = item.get('sales', 0)
+                # Можно добавить sales_per_month и sales_total, если они есть
+                sales_info = f"Продажи: {sales_today}"
+                if sales_today == 0:
+                    sales_info = "Нет данных о продажах"
+                tracked_text += f"• {item['article']} — Цена: {item['price']}₽, {sales_info}, Рейтинг: {item['rating']}\n"
+            if len(tracked_items) > 10:
+                tracked_text += f"... и ещё {len(tracked_items)-10} товаров\n"
+            tracked_text += "\n"  # Пустая строка после блока
+        else:
+            tracked_text = "\n🔗 Нет отслеживаемых товаров.\n"
+
+        # Лимиты и прогресс-бары
+        action_stats = subscription_stats.get('actions', {})
+        limits_info = []
+        for action, stats in action_stats.items():
+            used = stats.get('used', 0)
+            limit = stats.get('limit', 0)
+            if limit == float('inf'):
+                bar = "[∞]"
+                limit_str = "∞"
+            else:
+                # Прогресс-бар
+                total = int(limit) if isinstance(limit, (int, float)) and limit > 0 else 1
+                filled = int((used / total) * 10) if total else 0
+                bar = "▓" * filled + "░" * (10 - filled)
+                limit_str = str(limit)
+            limits_info.append(f"{action}: {bar} {used}/{limit_str}")
+        limits_block = "\n📈 Лимиты и использование:\n" + "\n".join(limits_info)
+
+        # Совет
+        advice = "\n━━━━━━━━━━━━━━━━━━\n💡 Совет: Используйте лимиты по максимуму для роста продаж!"
+
+        # Итоговое сообщение
+        stats_message = (
+            "📊 Ваша подписка: " + subscription_type.upper() +
+            (f"\n⏳ Осталось дней: {days_left} (до {expiry_date})" if days_left is not None else "") +
+            tracked_text +
+            limits_block +
+            advice
+        )
+
+        await callback_query.message.answer(
+            stats_message,
+            reply_markup=main_menu_kb()
+        )
+
+        # (Опционально) — отправить график, если есть данные по продажам
+        # Можно реализовать позже, если потребуется
+
+    except Exception as e:
+        logger.error(f"Error in stats callback: {str(e)}", exc_info=True)
+        await callback_query.message.answer(
+            "❌ Произошла ошибка при получении статистики",
+            reply_markup=main_menu_kb()
+        )
+
+@dp.callback_query(lambda c: c.data == "tracking")
+async def tracking_callback(callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
+    tracked_items = subscription_manager.get_tracked_items(user_id)
+    if tracked_items:
+        text = "📋 Ваши отслеживаемые товары:\n"
+        articles = []
+        sales_per_day = []
+        for item in tracked_items:
+            article = item['article']
+            price = item['price']
+            rating = item['rating']
+            # Продажи за сутки: если есть — берём, если нет — считаем по отзывам
+            sales_today = item.get('sales', 0)
+            if not sales_today or sales_today == 0:
+                # Получаем отзывы (если есть)
+                # Для этого нужно получить product_info
+                product_info = await get_wb_product_info(article)
+                feedbacks = product_info.get('feedbacks', 0) if product_info else 0
+                sales_today = int((feedbacks * 30) / 365) if feedbacks else 0
+            articles.append(str(article))
+            sales_per_day.append(sales_today)
+            sales_info = f"Продажи: {sales_today}" if sales_today else "Нет данных о продажах"
+            text += f"• {article} — Цена: {price}₽, {sales_info}, Рейтинг: {rating}\n"
+        text += "\n"
+        # Строим график
+        if any(sales_per_day):
+            plt.figure(figsize=(8, 4))
+            plt.bar(articles, sales_per_day, color="#4e79a7")
+            plt.title("Продажи за сутки по отслеживаемым товарам")
+            plt.xlabel("Артикул")
+            plt.ylabel("Продажи/сутки")
+            plt.tight_layout()
+            tmpfile = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+            plt.savefig(tmpfile.name)
+            plt.close()
+            await callback_query.message.answer_photo(
+                types.FSInputFile(tmpfile.name),
+                caption="График продаж за сутки по отслеживаемым товарам"
+            )
+        else:
+            text += "Нет данных для построения графика.\n"
+    else:
+        text = "У вас пока нет отслеживаемых товаров.\nДобавьте их через анализ товара или профиль."
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Добавить", callback_data="add_tracking"),
+         InlineKeyboardButton(text="➖ Удалить", callback_data="remove_tracking")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_main")]
+    ])
+    await callback_query.message.edit_text(
+        text,
+        reply_markup=keyboard
+    )
+
+@dp.callback_query(lambda c: c.data == "add_tracking")
+async def add_tracking_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    await state.set_state(TrackingStates.waiting_for_article_to_add)
+    await callback_query.message.edit_text(
+        "Введите артикул товара, который хотите добавить в отслеживание:",
+        reply_markup=back_keyboard()
+    )
+
+@dp.callback_query(lambda c: c.data == "remove_tracking")
+async def remove_tracking_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    await state.set_state(TrackingStates.waiting_for_article_to_remove)
+    await callback_query.message.edit_text(
+        "Введите артикул товара, который хотите удалить из отслеживания:",
+        reply_markup=back_keyboard()
+    )
+
+@dp.message(TrackingStates.waiting_for_article_to_add)
+async def process_add_tracking(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    article = message.text.strip()
+    tracked = subscription_manager.get_tracked_items(user_id)
+    if any(item['article'] == article for item in tracked):
+        await message.answer(f"Артикул {article} уже отслеживается!", reply_markup=main_menu_kb())
+        await state.clear()
+        return
+    # Получаем реальные данные о товаре
+    product_info = await get_wb_product_info(article)
+    if not product_info:
+        await message.answer(f"❌ Не удалось найти товар с артикулом {article}.", reply_markup=main_menu_kb())
+        await state.clear()
+        return
+    price = product_info['price']['current']
+    sales_today = product_info['sales'].get('today', 0)
+    sales_total = product_info['sales'].get('total', 0)
+    sales_per_month = product_info['sales'].get('month', 0) if 'month' in product_info['sales'] else product_info['sales'].get('salesPerMonth', 0)
+    rating = product_info['rating']
+    subscription_manager.add_tracked_item(user_id, article, price=price, sales=sales_today, rating=rating)
+    # Явно увеличиваем счетчик tracking_items в user_actions
+    import sqlite3
+    conn = sqlite3.connect(subscription_manager.db_path)
+    cursor = conn.cursor()
+    cursor.execute('SELECT count FROM user_actions WHERE user_id = ? AND action_type = ?', (user_id, 'tracking_items'))
+    result = cursor.fetchone()
+    if not result:
+        cursor.execute('INSERT INTO user_actions (user_id, action_type, count) VALUES (?, ?, 1)', (user_id, 'tracking_items'))
+    else:
+        cursor.execute('UPDATE user_actions SET count = count + 1 WHERE user_id = ? AND action_type = ?', (user_id, 'tracking_items'))
+    conn.commit()
+    conn.close()
+    sales_info = f"Продажи сегодня: {sales_today}"
+    if sales_per_month:
+        sales_info += f", за месяц: {sales_per_month}"
+    if sales_total:
+        sales_info += f", всего: {sales_total}"
+    await message.answer(f"✅ Артикул {article} добавлен в отслеживаемые!\nЦена: {price}₽, {sales_info}, Рейтинг: {rating}", reply_markup=main_menu_kb())
+    await state.clear()
+
+@dp.message(TrackingStates.waiting_for_article_to_remove)
+async def process_remove_tracking(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    article = message.text.strip()
+    tracked = subscription_manager.get_tracked_items(user_id)
+    if not any(item['article'] == article for item in tracked):
+        await message.answer(f"Артикул {article} не найден среди отслеживаемых.", reply_markup=main_menu_kb())
+        await state.clear()
+        return
+    subscription_manager.remove_tracked_item(user_id, article)
+    await message.answer(f"❌ Артикул {article} удалён из отслеживаемых.", reply_markup=main_menu_kb())
+    await state.clear()
+
+@dp.callback_query(lambda c: c.data == "tracked")
+async def tracked_callback(callback_query: types.CallbackQuery):
+    # Просто вызываем tracking_callback
+    await tracking_callback(callback_query)
 
 if __name__ == '__main__':
     asyncio.run(main()) 

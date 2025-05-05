@@ -25,10 +25,46 @@ class SubscriptionManager:
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
-            balance REAL DEFAULT 0.0,
-            subscription_type TEXT DEFAULT 'free',
-            subscription_end DATE,
+            username TEXT,
+            balance REAL DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
+        
+        # Создаем таблицу подписок
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            subscription_type TEXT,
+            start_date TIMESTAMP,
+            end_date TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (user_id)
+        )
+        ''')
+        
+        # Создаем таблицу транзакций
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            amount REAL,
+            type TEXT,
+            description TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (user_id)
+        )
+        ''')
+        
+        # Создаем таблицу лимитов
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS limits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            action_type TEXT,
+            count INTEGER DEFAULT 0,
+            last_reset TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (user_id)
         )
         ''')
         
@@ -458,16 +494,22 @@ class SubscriptionManager:
         
         limits = self.get_subscription_limits(user_id)
         stats = {
-            'type': sub_info[0],
-            'expiry_date': sub_info[1],
+            'subscription_type': sub_info[0] if sub_info[0] else 'free',
+            'expiry_date': sub_info[1].replace(' ', 'T') if sub_info[1] else None,
             'actions': {}
         }
         
-        for action_type, count in actions:
+        # Initialize all possible actions with zero usage
+        for action_type in limits.keys():
             stats['actions'][action_type] = {
-                'used': count,
+                'used': 0,
                 'limit': limits[action_type]
             }
+        
+        # Update with actual usage
+        for action_type, count in actions:
+            if action_type in stats['actions']:
+                stats['actions'][action_type]['used'] = count
         
         logger.info(f"Retrieved subscription stats for user {user_id}: {stats}")
         return stats
