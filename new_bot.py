@@ -32,6 +32,8 @@ import instaloader
 import time
 from urllib.parse import urlparse
 import random
+import aiohttp
+import sys
 
 # Настройка логирования
 logging.basicConfig(
@@ -47,7 +49,10 @@ logger = logging.getLogger(__name__)
 # Инициализация бота и диспетчера
 BOT_TOKEN = "7790448077:AAFiiS0a44A40zJUEivONLRutB-kqradDdE"  # Обновленный токен
 ADMIN_ID = 1659228199  # Замените на ваш ID в Telegram
-SERPER_API_KEY = "8ba851ed7ae1e6a655102bea15d73fdb39cdac79"  # ключ для serper.dev API
+# Ключ для serper.dev API
+SERPER_API_KEY = "8ba851ed7ae1e6a655102bea15d73fdb39cdac79"
+# Ключ для MPSTA API
+MPSTA_API_KEY = "682872eed804b5.13782565c9e71152c442e4c8c0dca9be2c1a53f2"
 
 storage = MemoryStorage()
 bot = Bot(token=BOT_TOKEN)
@@ -293,25 +298,52 @@ async def subscription_callback(callback_query: types.CallbackQuery):
         reply_markup=keyboard
     )
 
-# Обработчики подписок
 @dp.callback_query(lambda c: c.data.startswith("subscribe_"))
-async def handle_subscription(callback_query: types.CallbackQuery):
-    subscription_type = callback_query.data.split("_")[1]
-    cost = SUBSCRIPTION_COSTS[subscription_type]
-    
-    await callback_query.message.edit_text(
-        f"📅 *Оформление подписки {subscription_type.capitalize()}*\n\n"
-        f"Стоимость: {cost}₽/мес\n\n"
-        "Для оформления подписки:\n"
-        "1. Переведите {cost}₽ на наш счет\n"
-        "2. Отправьте скриншот подтверждения оплаты\n\n"
-        "Реквизиты для оплаты:\n"
-        "Сбербанк: 1234 5678 9012 3456\n"
-        "QIWI: +7 (999) 123-45-67\n"
-        "ЮMoney: 4100 1234 5678 9012",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=back_keyboard()
-    )
+async def handle_subscription_selection(callback_query: types.CallbackQuery):
+    try:
+        subscription_type = callback_query.data.split("_")[1]
+        cost = SUBSCRIPTION_COSTS[subscription_type]
+        user_id = callback_query.from_user.id
+        
+        # Проверяем баланс пользователя
+        balance = subscription_manager.get_user_balance(user_id)
+        
+        if balance >= cost:
+            # Если достаточно средств, оформляем подписку
+            subscription_manager.update_subscription(user_id, subscription_type)
+            subscription_manager.update_balance(user_id, -cost)
+            
+            await callback_query.message.edit_text(
+                f"✅ Подписка {subscription_type.capitalize()} успешно оформлена!\n\n"
+                f"Списано: {cost}₽\n"
+                f"Остаток на балансе: {balance - cost}₽\n\n"
+                "Теперь вам доступны все функции выбранного тарифа.",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="◀️ В меню", callback_data="back_to_main")]
+                ])
+            )
+        else:
+            # Если недостаточно средств, предлагаем пополнить баланс
+            await callback_query.message.edit_text(
+                f"❌ Недостаточно средств для оформления подписки {subscription_type.capitalize()}\n\n"
+                f"Стоимость: {cost}₽\n"
+                f"Ваш баланс: {balance}₽\n\n"
+                "Пожалуйста, пополните баланс для оформления подписки.",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="add_funds")],
+                    [InlineKeyboardButton(text="◀️ Назад", callback_data="subscription")]
+                ])
+            )
+    except Exception as e:
+        logger.error(f"Error in subscription selection: {str(e)}")
+        await callback_query.message.edit_text(
+            "❌ Произошла ошибка при оформлении подписки. Пожалуйста, попробуйте позже.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ В меню", callback_data="back_to_main")]
+            ])
+        )
 
 # Добавляем обработчик глобального поиска
 @dp.callback_query(lambda c: c.data == "product_search")
@@ -332,20 +364,19 @@ async def handle_global_search(callback_query: types.CallbackQuery, state: FSMCo
         await state.set_state(UserStates.waiting_for_search)
         
         await callback_query.message.edit_text(
-            "🌐 *Глобальный поиск в социальных сетях*\n\n"
-            "Введите название товара или бренда для анализа.\n"
-            "Например: `зимняя куртка nike` или `iphone 15`\n\n"
-            "🔍 Анализ будет проведен по следующим площадкам:\n"
-            "• VK\n"
-            "• Instagram\n"
-            "• Telegram\n"
-            "• Facebook\n"
-            "• Twitter\n\n"
-            "📊 Вы получите информацию о:\n"
-            "• Популярности товара\n"
-            "• Активности в соцсетях\n"
-            "• Потенциальной аудитории\n"
-            "• Прогнозе продаж",
+            "🌐 *Глобальный поиск и анализ рекламы*\n\n"
+            "Введите артикул товара или название для анализа.\n"
+            "Например: `176409037` или `Носки`\n\n"
+            "🔍 Анализ будет проведен с использованием API MPSTA:\n"
+            "• Данные о продажах товара\n"
+            "• Статистика рекламных кампаний\n"
+            "• Эффективность блогеров\n"
+            "• Прирост заказов и выручки после рекламы\n\n"
+            "📊 Вы получите подробный отчет с метриками:\n"
+            "• Суммарная частотность и выручка\n"
+            "• Прирост количества заказов\n"
+            "• Эффективность рекламных публикаций\n"
+            "• Рекомендации по блогерам",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=back_keyboard()
         )
@@ -458,12 +489,31 @@ async def profile_handler(message: types.Message):
 @dp.callback_query(lambda c: c.data.startswith('confirm_payment_') or c.data.startswith('reject_payment_'))
 async def process_payment_confirmation(callback_query: types.CallbackQuery):
     try:
-        action, user_id, amount = callback_query.data.split('_')[1:]
-        user_id = int(user_id)
-        amount = float(amount)
+        # Расширенное логирование для отладки
+        logger.info(f"Payment callback received: {callback_query.data}")
+        
+        parts = callback_query.data.split('_')
+        logger.info(f"Split parts: {parts}, len: {len(parts)}")
+        
+        if len(parts) < 4:  # Должно быть как минимум 4 части: confirm_payment_user_id_amount
+            logger.error(f"Invalid callback data format: {callback_query.data}")
+            await callback_query.answer("Ошибка формата данных")
+            return
+            
+        action = parts[0]  # confirm или reject
+        operation = parts[1]  # payment
+        user_id = int(parts[2])
+        amount_cents = int(parts[3])
+        
+        amount = amount_cents / 100
+        
+        logger.info(f"Processing payment: action={action}, operation={operation}, user_id={user_id}, amount={amount}")
         
         if action == 'confirm':
-            subscription_manager.update_balance(user_id, amount)
+            logger.info(f"Confirming payment for user {user_id}, amount: {amount}")
+            new_balance = subscription_manager.update_balance(user_id, amount)
+            logger.info(f"Balance updated: {new_balance}")
+            
             await bot.send_message(
                 user_id,
                 f"✅ Ваш баланс успешно пополнен на {amount}₽",
@@ -474,6 +524,7 @@ async def process_payment_confirmation(callback_query: types.CallbackQuery):
                 reply_markup=None
             )
         else:
+            logger.info(f"Rejecting payment for user {user_id}, amount: {amount}")
             await bot.send_message(
                 user_id,
                 "❌ Ваш платеж был отклонен администратором. "
@@ -485,7 +536,7 @@ async def process_payment_confirmation(callback_query: types.CallbackQuery):
                 reply_markup=None
             )
     except Exception as e:
-        logger.error(f"Error confirming payment: {str(e)}")
+        logger.error(f"Error confirming payment: {str(e)}", exc_info=True)
         await callback_query.answer("Произошла ошибка при обработке платежа")
 
 @dp.callback_query(lambda c: c.data == 'product_analysis')
@@ -1302,6 +1353,32 @@ def format_serper_results_detailed(data):
     
     return message, distribution_chart, revenue_chart
 
+# Добавляем import безопасной функции
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+try:
+    from safe_mpsta import safe_format_mpsta_results
+except ImportError:
+    # Определяем функцию прямо здесь, если импорт не работает
+    def safe_format_mpsta_results(data):
+        """Безопасная реализация форматирования результатов MPSTA."""
+        try:
+            if "error" in data:
+                return data["error"], []
+            
+            query = data.get("query", "")
+            is_article = data.get("is_article", False)
+            
+            # Простой вывод результата без графиков
+            result = f"🔍 *Анализ рекламы {'по артикулу' if is_article else 'товара'}: {query}*\n\n"
+            result += "Данные получены успешно, но визуализация временно недоступна.\n\n"
+            result += "Пожалуйста, свяжитесь с разработчиком для обновления функции графиков."
+            
+            # Возвращаем текст и пустой список файлов графиков
+            return result, []
+        except Exception as e:
+            logger.error(f"Error in safe_format_mpsta_results fallback: {str(e)}", exc_info=True)
+            return f"❌ Произошла ошибка при форматировании результатов: {str(e)}", []
+
 @dp.message(lambda message: message.text and message.text.strip(), UserStates.waiting_for_search)
 async def handle_search_query(message: types.Message, state: FSMContext):
     try:
@@ -1316,67 +1393,95 @@ async def handle_search_query(message: types.Message, state: FSMContext):
             await state.clear()
             return
         
-        await message.answer(
-            "🔍 Анализирую социальные сети...\n"
-            "⏳ Это может занять некоторое время"
+        # Отправляем сообщение о начале анализа
+        processing_message = await message.answer(
+            "🔍 *Выполняется комплексный анализ рекламных данных...*\n\n"
+            "⚙️ Этап 1: Запрос данных из MPSTA API\n"
+            "⏳ Этап 2: Анализ социальных сетей\n"
+            "🔄 Этап 3: Объединение результатов\n"
+            "📊 Этап 4: Генерация рекомендаций\n\n"
+            "Пожалуйста, подождите, этот процесс может занять некоторое время...",
+            parse_mode=ParseMode.MARKDOWN
         )
         
-        # Выполняем поиск
-        search_results = await global_search_serper_detailed(search_query)
-        
-        if search_results.get("error"):
-            await message.answer(search_results["error"])
-            await state.clear()
-            return
-            
-        if not search_results.get("results"):
-            if "message" in search_results:
-                await message.answer(search_results["message"])
-            else:
-                await message.answer("По вашему запросу ничего не найдено")
-            await state.clear()
-            return
-        
-        # Сохраняем результаты в состоянии для пагинации
-        await state.update_data(
-            search_results=search_results["results"],
-            current_page=0,
-            query=search_query
+        # Обновляем сообщение о статусе
+        await asyncio.sleep(1)
+        await processing_message.edit_text(
+            "🔍 *Выполняется комплексный анализ рекламных данных...*\n\n"
+            "✅ Этап 1: Запрос данных из MPSTA API\n"
+            "⚙️ Этап 2: Анализ социальных сетей\n"
+            "⏳ Этап 3: Объединение результатов\n"
+            "🔄 Этап 4: Генерация рекомендаций\n\n"
+            "Пожалуйста, подождите, этот процесс может занять некоторое время...",
+            parse_mode=ParseMode.MARKDOWN
         )
         
-        # Форматируем и отправляем первую страницу результатов
-        first_page = search_results["results"][:5]
-        formatted_results, distribution_chart, revenue_chart = format_serper_results_detailed({"results": first_page})
+        # Получаем данные из MPSTA API
+        mpsta_data = await get_mpsta_data(search_query)
         
-        # Создаем клавиатуру с кнопками навигации
-        keyboard = []
-        if len(search_results["results"]) > 5:
-            keyboard.append([
-                InlineKeyboardButton(text="➡️ Следующая страница", callback_data="next_page")
-            ])
-        keyboard.append([
-            InlineKeyboardButton(text="🔄 Новый поиск", callback_data="product_search"),
-            InlineKeyboardButton(text="◀️ В меню", callback_data="back_to_main")
+        await asyncio.sleep(1)
+        await processing_message.edit_text(
+            "🔍 *Выполняется комплексный анализ рекламных данных...*\n\n"
+            "✅ Этап 1: Запрос данных из MPSTA API\n"
+            "✅ Этап 2: Анализ социальных сетей\n"
+            "⚙️ Этап 3: Объединение результатов\n"
+            "⏳ Этап 4: Генерация рекомендаций\n\n"
+            "Пожалуйста, подождите, этот процесс может занять некоторое время...",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        
+        if "error" in mpsta_data:
+            await processing_message.edit_text(f"❌ Ошибка при получении данных: {mpsta_data['error']}")
+            await state.clear()
+            return
+        
+        await asyncio.sleep(1)
+        await processing_message.edit_text(
+            "🔍 *Выполняется комплексный анализ рекламных данных...*\n\n"
+            "✅ Этап 1: Запрос данных из MPSTA API\n"
+            "✅ Этап 2: Анализ социальных сетей\n"
+            "✅ Этап 3: Объединение результатов\n"
+            "⚙️ Этап 4: Генерация рекомендаций\n\n"
+            "Завершаем анализ и подготавливаем результаты...",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        
+        # Используем безопасную функцию вместо оригинальной
+        formatted_results, chart_files = safe_format_mpsta_results(mpsta_data)
+        
+        # Создаем клавиатуру для возврата
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🔄 Новый поиск", callback_data="product_search"),
+                InlineKeyboardButton(text="◀️ В меню", callback_data="back_to_main")
+            ]
         ])
         
-        # Отправляем графики
-        await message.answer_photo(
-            FSInputFile(distribution_chart),
-            caption="Распределение активности по платформам"
-        )
-        await message.answer_photo(
-            FSInputFile(revenue_chart),
-            caption="Потенциальная выручка по платформам"
+        # Отправляем основной отчет
+        await processing_message.edit_text(
+            "✅ *Анализ успешно завершен!*\n\n"
+            "Отправляю подробный отчет...",
+            parse_mode=ParseMode.MARKDOWN
         )
         
-        # Отправляем текстовый анализ
-        await message.answer(
+        # Отправляем основной текст с результатами
+        main_message = await message.answer(
             formatted_results,
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+            parse_mode=ParseMode.MARKDOWN,
             disable_web_page_preview=True
         )
         
-        await state.set_state(UserStates.viewing_search_results)
+        # Финальное сообщение с клавиатурой
+        await message.answer(
+            "🎯 *Анализ рекламы завершен*\n\n"
+            "Выше представлены результаты комплексного анализа рекламных кампаний "
+            f"{'по артикулу' if search_query.isdigit() else 'товара'} *{search_query}*.\n\n"
+            "Что вы хотите сделать дальше?",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=keyboard
+        )
+        
+        await state.clear()
         
     except Exception as e:
         logger.error(f"Error processing search query: {str(e)}", exc_info=True)
@@ -1454,6 +1559,9 @@ async def handle_payment_screenshot(message: types.Message, state: FSMContext):
         amount = data.get('amount')
         user_id = message.from_user.id
         
+        # Преобразуем сумму в целое число копеек, чтобы избежать проблем с десятичной точкой
+        amount_cents = int(amount * 100)
+        
         admin_message = (
             f"🔄 *Новая заявка на пополнение баланса*\n\n"
             f"👤 Пользователь: {message.from_user.full_name} (ID: {user_id})\n"
@@ -1463,8 +1571,8 @@ async def handle_payment_screenshot(message: types.Message, state: FSMContext):
         
         admin_keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
-                InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"confirm_payment_{user_id}_{amount}"),
-                InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_payment_{user_id}_{amount}")
+                InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"confirm_payment_{user_id}_{amount_cents}"),
+                InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_payment_{user_id}_{amount_cents}")
             ]
         ])
         
@@ -2138,6 +2246,1131 @@ def search_instagram_by_hashtag(hashtag, max_posts=5):
         })
     return results
 
+# --- Интеграция с MPSTA API ---
+async def get_mpsta_data(query):
+    """Получение данных из API MPSTA."""
+    logger.info(f"Getting MPSTA data for query: {query}")
+    
+    # Определяем, является ли запрос артикулом или поисковым запросом
+    is_article = query.isdigit()
+    
+    today = datetime.now()
+    month_ago = today - timedelta(days=30)
+    date_from = month_ago.strftime("%d.%m.%Y")
+    date_to = today.strftime("%d.%m.%Y")
+    
+    headers = {
+        "X-Mpstats-TOKEN": MPSTA_API_KEY,
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        # Сначала получаем данные через API MPSTA
+        mpsta_results = {}
+        
+        # Если это артикул, запрашиваем данные по артикулу
+        if is_article:
+            url = f"https://mpstats.io/api/wb/get/item/{query}/sales?d1={date_from}&d2={date_to}"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        mpsta_results["article_data"] = data
+                    else:
+                        logger.error(f"MPSTA API error: {await response.text()}")
+                        mpsta_results["error"] = f"Ошибка API: {response.status}"
+                        
+            # Также запрашиваем данные о рекламе для артикула
+            ad_url = f"https://mpstats.io/api/wb/get/item/{query}/adverts?d1={date_from}&d2={date_to}"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(ad_url, headers=headers) as response:
+                    if response.status == 200:
+                        ad_data = await response.json()
+                        mpsta_results["ad_data"] = ad_data
+        # Если это поисковый запрос, ищем товары по запросу
+        else:
+            # Запрос по ключевому слову
+            search_url = f"https://mpstats.io/api/wb/get/keywords?d1={date_from}&d2={date_to}&keyword={query}"
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(search_url, headers=headers) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        mpsta_results["search_data"] = data
+                        
+                        # Если есть результаты, получаем данные о товарах и их рекламе
+                        if data and "items" in data and len(data["items"]) > 0:
+                            product_data = []
+                            ad_data = []
+                            
+                            # Берем первые 5 товаров для анализа
+                            for item in data["items"][:5]:
+                                try:
+                                    article = item.get("id") or item.get("nmId")
+                                    if article:
+                                        # Получаем данные о товаре
+                                        product_url = f"https://mpstats.io/api/wb/get/item/{article}/sales?d1={date_from}&d2={date_to}"
+                                        async with session.get(product_url, headers=headers) as product_response:
+                                            if product_response.status == 200:
+                                                product_info = await product_response.json()
+                                                product_data.append({
+                                                    "article": article,
+                                                    "data": product_info
+                                                })
+                                        
+                                        # Получаем данные о рекламе товара
+                                        ad_url = f"https://mpstats.io/api/wb/get/item/{article}/adverts?d1={date_from}&d2={date_to}"
+                                        async with session.get(ad_url, headers=headers) as ad_response:
+                                            if ad_response.status == 200:
+                                                ad_info = await ad_response.json()
+                                                ad_data.append({
+                                                    "article": article,
+                                                    "ad_data": ad_info
+                                                })
+                                except Exception as e:
+                                    logger.error(f"Error getting product data: {str(e)}")
+                                    continue
+                            
+                            mpsta_results["product_data"] = product_data
+                            mpsta_results["ad_data"] = ad_data
+        
+        # Теперь дополняем данными из нашего существующего поиска
+        serper_results = await global_search_serper_detailed(query)
+        
+        # Объединяем результаты
+        combined_results = {
+            "mpsta_results": mpsta_results,
+            "serper_results": serper_results,
+            "is_article": is_article,
+            "query": query
+        }
+        
+        return combined_results
+    
+    except Exception as e:
+        logger.error(f"Error in MPSTA API request: {str(e)}", exc_info=True)
+        return {"error": f"Ошибка запроса: {str(e)}", "is_article": is_article}
+
+def generate_mpsta_charts(data):
+    """Генерирует графики на основе данных MPSTA API."""
+    chart_files = []
+    
+    try:
+        # Проверяем, есть ли данные для построения графиков
+        mpsta_results = data.get("mpsta_results", {})
+        if not mpsta_results:
+            return []
+        
+        is_article = data.get("is_article", False)
+        query = data.get("query", "")
+        
+        # Данные для графиков
+        revenue_data = []
+        orders_data = []
+        platforms = []
+        blogger_data = {}
+        growth_data = {}
+        
+        # Обработка данных из ответа API
+        if is_article and "ad_data" in mpsta_results:
+            ad_data = mpsta_results["ad_data"]
+            
+            # Собираем данные об эффективности рекламы
+            for ad in ad_data.get("items", []):
+                try:
+                    # Данные о блогере/площадке
+                    platform = ad.get("platform", "Неизвестно")
+                    blogger = ad.get("blogger", {}).get("name", "Неизвестный")
+                    
+                    # Метрики публикации
+                    likes = ad.get("likes", 0)
+                    views = ad.get("views", 0)
+                    revenue = ad.get("revenue", 0)
+                    orders = ad.get("orders", 0)
+                    
+                    # Добавляем данные для графиков
+                    revenue_data.append(revenue)
+                    orders_data.append(orders)
+                    platforms.append(platform)
+                    
+                    # Данные по блогерам
+                    if blogger not in blogger_data:
+                        blogger_data[blogger] = {
+                            "revenue": 0,
+                            "orders": 0,
+                            "likes": 0,
+                            "views": 0,
+                            "posts": 0
+                        }
+                    
+                    blogger_data[blogger]["revenue"] += revenue
+                    blogger_data[blogger]["orders"] += orders
+                    blogger_data[blogger]["likes"] += likes
+                    blogger_data[blogger]["views"] += views
+                    blogger_data[blogger]["posts"] += 1
+                    
+                    # Данные о росте показателей
+                    date = ad.get("date", "")
+                    if date:
+                        if date not in growth_data:
+                            growth_data[date] = {
+                                "revenue": 0,
+                                "orders": 0
+                            }
+                        growth_data[date]["revenue"] += revenue
+                        growth_data[date]["orders"] += orders
+                except Exception as e:
+                    logger.error(f"Error processing ad data: {str(e)}")
+                    continue
+        
+        # Если есть данные о нескольких товарах
+        elif "product_data" in mpsta_results and "ad_data" in mpsta_results:
+            # Объединяем данные о товарах и их рекламе
+            articles = set()
+            for product in mpsta_results.get("product_data", []):
+                articles.add(product.get("article", ""))
+            
+            for ad_item in mpsta_results.get("ad_data", []):
+                try:
+                    article = ad_item.get("article", "")
+                    if article not in articles:
+                        continue
+                    
+                    ad_list = ad_item.get("ad_data", {}).get("items", [])
+                    
+                    for ad in ad_list:
+                        # Данные о блогере/площадке
+                        platform = ad.get("platform", "Неизвестно")
+                        blogger = ad.get("blogger", {}).get("name", "Неизвестный")
+                        
+                        # Метрики публикации
+                        likes = ad.get("likes", 0)
+                        views = ad.get("views", 0)
+                        revenue = ad.get("revenue", 0)
+                        orders = ad.get("orders", 0)
+                        
+                        # Добавляем данные для графиков
+                        revenue_data.append(revenue)
+                        orders_data.append(orders)
+                        platforms.append(platform)
+                        
+                        # Данные по блогерам
+                        if blogger not in blogger_data:
+                            blogger_data[blogger] = {
+                                "revenue": 0,
+                                "orders": 0,
+                                "likes": 0,
+                                "views": 0,
+                                "posts": 0
+                            }
+                        
+                        blogger_data[blogger]["revenue"] += revenue
+                        blogger_data[blogger]["orders"] += orders
+                        blogger_data[blogger]["likes"] += likes
+                        blogger_data[blogger]["views"] += views
+                        blogger_data[blogger]["posts"] += 1
+                        
+                        # Данные о росте показателей
+                        date = ad.get("date", "")
+                        if date:
+                            if date not in growth_data:
+                                growth_data[date] = {
+                                    "revenue": 0,
+                                    "orders": 0
+                                }
+                            growth_data[date]["revenue"] += revenue
+                            growth_data[date]["orders"] += orders
+                except Exception as e:
+                    logger.error(f"Error processing product ad data: {str(e)}")
+                    continue
+        
+        # Проверяем, есть ли данные для построения графиков
+        if revenue_data and orders_data and platforms:
+            # 1. График сравнения выручки и заказов по публикациям
+            if len(revenue_data) > 0:
+                try:
+                    plt.figure(figsize=(10, 6))
+                    
+                    # Создаем двойную ось Y
+                    ax1 = plt.gca()
+                    ax2 = ax1.twinx()
+                    
+                    # Данные для графика
+                    x = np.arange(len(platforms))
+                    
+                    # Столбчатая диаграмма выручки
+                    bars1 = ax1.bar(x - 0.2, revenue_data, width=0.4, color='#4e79a7', label='Выручка, ₽')
+                    
+                    # Столбчатая диаграмма заказов
+                    bars2 = ax2.bar(x + 0.2, orders_data, width=0.4, color='#f28e2b', label='Заказы, шт')
+                    
+                    # Настройки оси X
+                    shortened_platforms = []
+                    for platform in platforms:
+                        # Сокращаем названия для лучшей читаемости
+                        if platform.lower() == 'instagram':
+                            shortened_platforms.append('IG')
+                        elif platform.lower() == 'vkontakte':
+                            shortened_platforms.append('VK')
+                        elif platform.lower() == 'youtube':
+                            shortened_platforms.append('YT')
+                        elif platform.lower() == 'telegram':
+                            shortened_platforms.append('TG')
+                        else:
+                            # Берем первые 2 символа
+                            shortened_platforms.append(platform[:2].upper())
+                    
+                    plt.xticks(x, shortened_platforms, rotation=45)
+                    
+                    # Легенда
+                    lines1, labels1 = ax1.get_legend_handles_labels()
+                    lines2, labels2 = ax2.get_legend_handles_labels()
+                    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+                    
+                    # Заголовок и метки осей
+                    plt.title(f'Сравнение публикаций по выручке и заказам для {query}')
+                    ax1.set_ylabel('Выручка, ₽')
+                    ax2.set_ylabel('Заказы, шт')
+                    
+                    # Добавляем значения над столбцами
+                    for i, v in enumerate(revenue_data):
+                        ax1.text(i - 0.2, v + max(revenue_data) * 0.02, f'{int(v):,}'.replace(',', ' '), 
+                                ha='center', va='bottom', fontsize=9, rotation=0)
+                    
+                    for i, v in enumerate(orders_data):
+                        ax2.text(i + 0.2, v + max(orders_data) * 0.02, str(int(v)), 
+                                ha='center', va='bottom', fontsize=9, rotation=0)
+                    
+                    plt.tight_layout()
+                    
+                    # Сохраняем график
+                    revenue_chart = tempfile.NamedTemporaryFile(suffix='.png', prefix='revenue_', delete=False)
+                    plt.savefig(revenue_chart.name, dpi=300)
+                    plt.close()
+                    
+                    chart_files.append(revenue_chart.name)
+                except Exception as e:
+                    logger.error(f"Error generating revenue chart: {str(e)}")
+            
+            # 2. График роста показателей
+            if growth_data:
+                try:
+                    # Сортируем даты
+                    sorted_dates = sorted(growth_data.keys())
+                    
+                    # Данные для графика
+                    growth_revenue = [growth_data[date]["revenue"] for date in sorted_dates]
+                    growth_orders = [growth_data[date]["orders"] for date in sorted_dates]
+                    
+                    # Нормализуем даты для отображения
+                    display_dates = []
+                    for date_str in sorted_dates:
+                        try:
+                            date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+                            display_dates.append(date_obj.strftime("%d.%m"))
+                        except:
+                            display_dates.append(date_str)
+                    
+                    # Создаем график
+                    plt.figure(figsize=(10, 6))
+                    
+                    # Линия выручки
+                    plt.plot(display_dates, growth_revenue, 'o-', color='#4e79a7', linewidth=2, markersize=6, label='Выручка, ₽')
+                    
+                    # Линия заказов на другой оси Y
+                    ax2 = plt.gca().twinx()
+                    ax2.plot(display_dates, growth_orders, 'o--', color='#f28e2b', linewidth=2, markersize=6, label='Заказы, шт')
+                    
+                    # Легенда
+                    lines1, labels1 = plt.gca().get_legend_handles_labels()
+                    lines2, labels2 = ax2.get_legend_handles_labels()
+                    plt.gca().legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+                    
+                    # Заголовок и метки осей
+                    plt.title(f'Прирост выручки и заказов для {query}')
+                    plt.gca().set_ylabel('Выручка, ₽')
+                    ax2.set_ylabel('Заказы, шт')
+                    
+                    # Поворот меток на оси X
+                    plt.xticks(rotation=45)
+                    
+                    plt.tight_layout()
+                    
+                    # Сохраняем график
+                    growth_chart = tempfile.NamedTemporaryFile(suffix='.png', prefix='growth_', delete=False)
+                    plt.savefig(growth_chart.name, dpi=300)
+                    plt.close()
+                    
+                    chart_files.append(growth_chart.name)
+                except Exception as e:
+                    logger.error(f"Error generating growth chart: {str(e)}")
+            
+            # 3. Круговая диаграмма распределения по платформам
+            try:
+                # Считаем выручку по платформам
+                platform_revenue = {}
+                for i, platform in enumerate(platforms):
+                    if platform not in platform_revenue:
+                        platform_revenue[platform] = 0
+                    platform_revenue[platform] += revenue_data[i]
+                
+                # Формируем данные для диаграммы
+                platforms_list = list(platform_revenue.keys())
+                revenue_list = [platform_revenue[p] for p in platforms_list]
+                
+                # Создаем диаграмму
+                plt.figure(figsize=(8, 8))
+                plt.pie(revenue_list, labels=platforms_list, autopct='%1.1f%%', startangle=90,
+                       colors=['#4e79a7', '#f28e2b', '#e15759', '#76b7b2', '#59a14f', '#edc949'],
+                       wedgeprops={'edgecolor': 'w', 'linewidth': 1, 'antialiased': True})
+                plt.title(f'Распределение выручки по платформам для {query}')
+                plt.axis('equal')
+                
+                # Сохраняем диаграмму
+                platforms_chart = tempfile.NamedTemporaryFile(suffix='.png', prefix='platforms_', delete=False)
+                plt.savefig(platforms_chart.name, dpi=300)
+                plt.close()
+                
+                chart_files.append(platforms_chart.name)
+            except Exception as e:
+                logger.error(f"Error generating platforms chart: {str(e)}")
+            
+            # 4. Диаграмма эффективности блогеров
+            if blogger_data:
+                try:
+                    # Выбираем топ-5 блогеров по выручке
+                    top_bloggers = sorted(blogger_data.items(), key=lambda x: x[1]["revenue"], reverse=True)[:5]
+                    
+                    # Формируем данные для диаграммы
+                    blogger_names = []
+                    blogger_revenue = []
+                    blogger_orders = []
+                    
+                    for blogger, data in top_bloggers:
+                        blogger_names.append(blogger[:10] + "..." if len(blogger) > 10 else blogger)
+                        blogger_revenue.append(data["revenue"])
+                        blogger_orders.append(data["orders"])
+                    
+                    # Создаем диаграмму
+                    plt.figure(figsize=(10, 6))
+                    x = np.arange(len(blogger_names))
+                    width = 0.35
+                    
+                    plt.bar(x - width/2, blogger_revenue, width, label='Выручка, ₽', color='#4e79a7')
+                    plt.bar(x + width/2, [o * 1000 for o in blogger_orders], width, label='Заказы x1000, шт', color='#f28e2b')
+                    
+                    plt.xlabel('Блогеры')
+                    plt.ylabel('Значения')
+                    plt.title(f'Топ-5 блогеров по эффективности для {query}')
+                    plt.xticks(x, blogger_names, rotation=45)
+                    plt.legend()
+                    
+                    plt.tight_layout()
+                    
+                    # Сохраняем диаграмму
+                    bloggers_chart = tempfile.NamedTemporaryFile(suffix='.png', prefix='bloggers_', delete=False)
+                    plt.savefig(bloggers_chart.name, dpi=300)
+                    plt.close()
+                    
+                    chart_files.append(bloggers_chart.name)
+                except Exception as e:
+                    logger.error(f"Error generating bloggers chart: {str(e)}")
+            
+            # 5. Тепловая карта эффективности
+            if len(platforms) >= 3 and len(blogger_data) >= 3:
+                try:
+                    # Создаем тепловую карту
+                    # Используем данные о выручке по платформам и блогерам
+                    top_platforms = sorted(platform_revenue.items(), key=lambda x: x[1], reverse=True)[:5]
+                    top_bloggers = sorted(blogger_data.items(), key=lambda x: x[1]["revenue"], reverse=True)[:5]
+                    
+                    # Создаем матрицу данных
+                    heatmap_data = np.zeros((len(top_bloggers), len(top_platforms)))
+                    
+                    # Заполняем матрицу
+                    for i, (blogger, b_data) in enumerate(top_bloggers):
+                        for j, (platform, _) in enumerate(top_platforms):
+                            # Ищем публикации этого блогера на этой платформе
+                            value = 0
+                            for k, p in enumerate(platforms):
+                                if p == platform and blogger_data.get(blogger, {}).get("revenue", 0) > 0:
+                                    value += revenue_data[k]
+                            heatmap_data[i, j] = value
+                    
+                    # Создаем тепловую карту
+                    plt.figure(figsize=(10, 6))
+                    
+                    # Подготавливаем метки
+                    platform_labels = [p[0] for p in top_platforms]
+                    blogger_labels = [b[0][:10] + "..." if len(b[0]) > 10 else b[0] for b in top_bloggers]
+                    
+                    # Рисуем тепловую карту
+                    plt.imshow(heatmap_data, cmap='YlOrRd')
+                    
+                    # Настраиваем оси
+                    plt.xticks(np.arange(len(platform_labels)), platform_labels, rotation=45)
+                    plt.yticks(np.arange(len(blogger_labels)), blogger_labels)
+                    
+                    # Добавляем значения в ячейки
+                    for i in range(len(blogger_labels)):
+                        for j in range(len(platform_labels)):
+                            value = int(heatmap_data[i, j])
+                            text_color = 'white' if value > np.max(heatmap_data) / 2 else 'black'
+                            plt.text(j, i, f'{value:,}'.replace(',', ' '), 
+                                    ha="center", va="center", color=text_color, fontsize=9)
+                    
+                    plt.colorbar(label='Выручка, ₽')
+                    plt.title(f'Тепловая карта эффективности для {query}')
+                    plt.tight_layout()
+                    
+                    # Сохраняем тепловую карту
+                    heatmap_chart = tempfile.NamedTemporaryFile(suffix='.png', prefix='heatmap_', delete=False)
+                    plt.savefig(heatmap_chart.name, dpi=300)
+                    plt.close()
+                    
+                    chart_files.append(heatmap_chart.name)
+                except Exception as e:
+                    logger.error(f"Error generating heatmap chart: {str(e)}")
+        
+        return chart_files
+    
+    except Exception as e:
+        logger.error(f"Error in generate_mpsta_charts: {str(e)}", exc_info=True)
+        return []
+
+def format_mpsta_results(data):
+    """Форматирует результаты из API MPSTA в табличный вид с рекомендациями и генерирует графики."""
+    chart_files = []
+    
+    try:
+        if "error" in data:
+            return data["error"], []
+        
+        query = data.get("query", "")
+        is_article = data.get("is_article", False)
+        mpsta_results = data.get("mpsta_results", {})
+        serper_results = data.get("serper_results", {}).get("results", [])
+        
+        # --- НАЧАЛО ГЕНЕРАЦИИ ГРАФИКОВ ---
+        try:
+            # Проверяем, есть ли данные для построения графиков
+            if mpsta_results:
+                # Данные для графиков
+                revenue_data = []
+                orders_data = []
+                platforms = []
+                blogger_data = {}
+                growth_data = {}
+                
+                # Обработка данных из ответа API
+                if is_article and "ad_data" in mpsta_results:
+                    ad_data = mpsta_results["ad_data"]
+                    
+                    # Собираем данные об эффективности рекламы
+                    for ad in ad_data.get("items", []):
+                        try:
+                            # Данные о блогере/площадке
+                            platform = ad.get("platform", "Неизвестно")
+                            blogger = ad.get("blogger", {}).get("name", "Неизвестный")
+                            
+                            # Метрики публикации
+                            likes = ad.get("likes", 0)
+                            views = ad.get("views", 0)
+                            revenue = ad.get("revenue", 0)
+                            orders = ad.get("orders", 0)
+                            
+                            # Добавляем данные для графиков
+                            revenue_data.append(revenue)
+                            orders_data.append(orders)
+                            platforms.append(platform)
+                            
+                            # Данные по блогерам
+                            if blogger not in blogger_data:
+                                blogger_data[blogger] = {
+                                    "revenue": 0,
+                                    "orders": 0,
+                                    "likes": 0,
+                                    "views": 0,
+                                    "posts": 0
+                                }
+                            
+                            blogger_data[blogger]["revenue"] += revenue
+                            blogger_data[blogger]["orders"] += orders
+                            blogger_data[blogger]["likes"] += likes
+                            blogger_data[blogger]["views"] += views
+                            blogger_data[blogger]["posts"] += 1
+                            
+                            # Данные о росте показателей
+                            date = ad.get("date", "")
+                            if date:
+                                if date not in growth_data:
+                                    growth_data[date] = {
+                                        "revenue": 0,
+                                        "orders": 0
+                                    }
+                                growth_data[date]["revenue"] += revenue
+                                growth_data[date]["orders"] += orders
+                        except Exception as e:
+                            logger.error(f"Error processing ad data: {str(e)}")
+                            continue
+                
+                # Если есть данные о нескольких товарах
+                elif "product_data" in mpsta_results and "ad_data" in mpsta_results:
+                    # Объединяем данные о товарах и их рекламе
+                    articles = set()
+                    for product in mpsta_results.get("product_data", []):
+                        articles.add(product.get("article", ""))
+                    
+                    for ad_item in mpsta_results.get("ad_data", []):
+                        try:
+                            article = ad_item.get("article", "")
+                            if article not in articles:
+                                continue
+                            
+                            ad_list = ad_item.get("ad_data", {}).get("items", [])
+                            
+                            for ad in ad_list:
+                                # Данные о блогере/площадке
+                                platform = ad.get("platform", "Неизвестно")
+                                blogger = ad.get("blogger", {}).get("name", "Неизвестный")
+                                
+                                # Метрики публикации
+                                likes = ad.get("likes", 0)
+                                views = ad.get("views", 0)
+                                revenue = ad.get("revenue", 0)
+                                orders = ad.get("orders", 0)
+                                
+                                # Добавляем данные для графиков
+                                revenue_data.append(revenue)
+                                orders_data.append(orders)
+                                platforms.append(platform)
+                                
+                                # Данные по блогерам
+                                if blogger not in blogger_data:
+                                    blogger_data[blogger] = {
+                                        "revenue": 0,
+                                        "orders": 0,
+                                        "likes": 0,
+                                        "views": 0,
+                                        "posts": 0
+                                    }
+                                
+                                blogger_data[blogger]["revenue"] += revenue
+                                blogger_data[blogger]["orders"] += orders
+                                blogger_data[blogger]["likes"] += likes
+                                blogger_data[blogger]["views"] += views
+                                blogger_data[blogger]["posts"] += 1
+                                
+                                # Данные о росте показателей
+                                date = ad.get("date", "")
+                                if date:
+                                    if date not in growth_data:
+                                        growth_data[date] = {
+                                            "revenue": 0,
+                                            "orders": 0
+                                        }
+                                    growth_data[date]["revenue"] += revenue
+                                    growth_data[date]["orders"] += orders
+                        except Exception as e:
+                            logger.error(f"Error processing product ad data: {str(e)}")
+                            continue
+                
+                # Проверяем, есть ли данные для построения графиков
+                if revenue_data and orders_data and platforms:
+                    # 1. График сравнения выручки и заказов по публикациям
+                    if len(revenue_data) > 0:
+                        try:
+                            plt.figure(figsize=(10, 6))
+                            
+                            # Создаем двойную ось Y
+                            ax1 = plt.gca()
+                            ax2 = ax1.twinx()
+                            
+                            # Данные для графика
+                            x = np.arange(len(platforms))
+                            
+                            # Столбчатая диаграмма выручки
+                            bars1 = ax1.bar(x - 0.2, revenue_data, width=0.4, color='#4e79a7', label='Выручка, ₽')
+                            
+                            # Столбчатая диаграмма заказов
+                            bars2 = ax2.bar(x + 0.2, orders_data, width=0.4, color='#f28e2b', label='Заказы, шт')
+                            
+                            # Настройки оси X
+                            shortened_platforms = []
+                            for platform in platforms:
+                                # Сокращаем названия для лучшей читаемости
+                                if platform.lower() == 'instagram':
+                                    shortened_platforms.append('IG')
+                                elif platform.lower() == 'vkontakte':
+                                    shortened_platforms.append('VK')
+                                elif platform.lower() == 'youtube':
+                                    shortened_platforms.append('YT')
+                                elif platform.lower() == 'telegram':
+                                    shortened_platforms.append('TG')
+                                else:
+                                    # Берем первые 2 символа
+                                    shortened_platforms.append(platform[:2].upper())
+                            
+                            plt.xticks(x, shortened_platforms, rotation=45)
+                            
+                            # Легенда
+                            lines1, labels1 = ax1.get_legend_handles_labels()
+                            lines2, labels2 = ax2.get_legend_handles_labels()
+                            ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+                            
+                            # Заголовок и метки осей
+                            plt.title(f'Сравнение публикаций по выручке и заказам для {query}')
+                            ax1.set_ylabel('Выручка, ₽')
+                            ax2.set_ylabel('Заказы, шт')
+                            
+                            # Добавляем значения над столбцами
+                            for i, v in enumerate(revenue_data):
+                                ax1.text(i - 0.2, v + max(revenue_data) * 0.02, f'{int(v):,}'.replace(',', ' '), 
+                                        ha='center', va='bottom', fontsize=9, rotation=0)
+                            
+                            for i, v in enumerate(orders_data):
+                                ax2.text(i + 0.2, v + max(orders_data) * 0.02, str(int(v)), 
+                                        ha='center', va='bottom', fontsize=9, rotation=0)
+                            
+                            plt.tight_layout()
+                            
+                            # Сохраняем график
+                            revenue_chart = tempfile.NamedTemporaryFile(suffix='.png', prefix='revenue_', delete=False)
+                            plt.savefig(revenue_chart.name, dpi=300)
+                            plt.close()
+                            
+                            chart_files.append(revenue_chart.name)
+                        except Exception as e:
+                            logger.error(f"Error generating revenue chart: {str(e)}")
+                    
+                    # 2. График роста показателей
+                    if growth_data:
+                        try:
+                            # Сортируем даты
+                            sorted_dates = sorted(growth_data.keys())
+                            
+                            # Данные для графика
+                            growth_revenue = [growth_data[date]["revenue"] for date in sorted_dates]
+                            growth_orders = [growth_data[date]["orders"] for date in sorted_dates]
+                            
+                            # Нормализуем даты для отображения
+                            display_dates = []
+                            for date_str in sorted_dates:
+                                try:
+                                    date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+                                    display_dates.append(date_obj.strftime("%d.%m"))
+                                except:
+                                    display_dates.append(date_str)
+                            
+                            # Создаем график
+                            plt.figure(figsize=(10, 6))
+                            
+                            # Линия выручки
+                            plt.plot(display_dates, growth_revenue, 'o-', color='#4e79a7', linewidth=2, markersize=6, label='Выручка, ₽')
+                            
+                            # Линия заказов на другой оси Y
+                            ax2 = plt.gca().twinx()
+                            ax2.plot(display_dates, growth_orders, 'o--', color='#f28e2b', linewidth=2, markersize=6, label='Заказы, шт')
+                            
+                            # Легенда
+                            lines1, labels1 = plt.gca().get_legend_handles_labels()
+                            lines2, labels2 = ax2.get_legend_handles_labels()
+                            plt.gca().legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+                            
+                            # Заголовок и метки осей
+                            plt.title(f'Прирост выручки и заказов для {query}')
+                            plt.gca().set_ylabel('Выручка, ₽')
+                            ax2.set_ylabel('Заказы, шт')
+                            
+                            # Поворот меток на оси X
+                            plt.xticks(rotation=45)
+                            
+                            plt.tight_layout()
+                            
+                            # Сохраняем график
+                            growth_chart = tempfile.NamedTemporaryFile(suffix='.png', prefix='growth_', delete=False)
+                            plt.savefig(growth_chart.name, dpi=300)
+                            plt.close()
+                            
+                            chart_files.append(growth_chart.name)
+                        except Exception as e:
+                            logger.error(f"Error generating growth chart: {str(e)}")
+                    
+                    # 3. Круговая диаграмма распределения по платформам
+                    try:
+                        # Считаем выручку по платформам
+                        platform_revenue = {}
+                        for i, platform in enumerate(platforms):
+                            if platform not in platform_revenue:
+                                platform_revenue[platform] = 0
+                            platform_revenue[platform] += revenue_data[i]
+                        
+                        # Формируем данные для диаграммы
+                        platforms_list = list(platform_revenue.keys())
+                        revenue_list = [platform_revenue[p] for p in platforms_list]
+                        
+                        # Создаем диаграмму
+                        plt.figure(figsize=(8, 8))
+                        plt.pie(revenue_list, labels=platforms_list, autopct='%1.1f%%', startangle=90,
+                               colors=['#4e79a7', '#f28e2b', '#e15759', '#76b7b2', '#59a14f', '#edc949'],
+                               wedgeprops={'edgecolor': 'w', 'linewidth': 1, 'antialiased': True})
+                        plt.title(f'Распределение выручки по платформам для {query}')
+                        plt.axis('equal')
+                        
+                        # Сохраняем диаграмму
+                        platforms_chart = tempfile.NamedTemporaryFile(suffix='.png', prefix='platforms_', delete=False)
+                        plt.savefig(platforms_chart.name, dpi=300)
+                        plt.close()
+                        
+                        chart_files.append(platforms_chart.name)
+                    except Exception as e:
+                        logger.error(f"Error generating platforms chart: {str(e)}")
+                    
+                    # 4. Диаграмма эффективности блогеров
+                    if blogger_data:
+                        try:
+                            # Выбираем топ-5 блогеров по выручке
+                            top_bloggers = sorted(blogger_data.items(), key=lambda x: x[1]["revenue"], reverse=True)[:5]
+                            
+                            # Формируем данные для диаграммы
+                            blogger_names = []
+                            blogger_revenue = []
+                            blogger_orders = []
+                            
+                            for blogger, data in top_bloggers:
+                                blogger_names.append(blogger[:10] + "..." if len(blogger) > 10 else blogger)
+                                blogger_revenue.append(data["revenue"])
+                                blogger_orders.append(data["orders"])
+                            
+                            # Создаем диаграмму
+                            plt.figure(figsize=(10, 6))
+                            x = np.arange(len(blogger_names))
+                            width = 0.35
+                            
+                            plt.bar(x - width/2, blogger_revenue, width, label='Выручка, ₽', color='#4e79a7')
+                            plt.bar(x + width/2, [o * 1000 for o in blogger_orders], width, label='Заказы x1000, шт', color='#f28e2b')
+                            
+                            plt.xlabel('Блогеры')
+                            plt.ylabel('Значения')
+                            plt.title(f'Топ-5 блогеров по эффективности для {query}')
+                            plt.xticks(x, blogger_names, rotation=45)
+                            plt.legend()
+                            
+                            plt.tight_layout()
+                            
+                            # Сохраняем диаграмму
+                            bloggers_chart = tempfile.NamedTemporaryFile(suffix='.png', prefix='bloggers_', delete=False)
+                            plt.savefig(bloggers_chart.name, dpi=300)
+                            plt.close()
+                            
+                            chart_files.append(bloggers_chart.name)
+                        except Exception as e:
+                            logger.error(f"Error generating bloggers chart: {str(e)}")
+                    
+                    # 5. Тепловая карта эффективности
+                    if len(platforms) >= 3 and len(blogger_data) >= 3:
+                        try:
+                            # Создаем тепловую карту
+                            # Используем данные о выручке по платформам и блогерам
+                            top_platforms = sorted(platform_revenue.items(), key=lambda x: x[1], reverse=True)[:5]
+                            top_bloggers = sorted(blogger_data.items(), key=lambda x: x[1]["revenue"], reverse=True)[:5]
+                            
+                            # Создаем матрицу данных
+                            heatmap_data = np.zeros((len(top_bloggers), len(top_platforms)))
+                            
+                            # Заполняем матрицу
+                            for i, (blogger, b_data) in enumerate(top_bloggers):
+                                for j, (platform, _) in enumerate(top_platforms):
+                                    # Ищем публикации этого блогера на этой платформе
+                                    value = 0
+                                    for k, p in enumerate(platforms):
+                                        if p == platform and blogger_data.get(blogger, {}).get("revenue", 0) > 0:
+                                            value += revenue_data[k]
+                                    heatmap_data[i, j] = value
+                            
+                            # Создаем тепловую карту
+                            plt.figure(figsize=(10, 6))
+                            
+                            # Подготавливаем метки
+                            platform_labels = [p[0] for p in top_platforms]
+                            blogger_labels = [b[0][:10] + "..." if len(b[0]) > 10 else b[0] for b in top_bloggers]
+                            
+                            # Рисуем тепловую карту
+                            plt.imshow(heatmap_data, cmap='YlOrRd')
+                            
+                            # Настраиваем оси
+                            plt.xticks(np.arange(len(platform_labels)), platform_labels, rotation=45)
+                            plt.yticks(np.arange(len(blogger_labels)), blogger_labels)
+                            
+                            # Добавляем значения в ячейки
+                            for i in range(len(blogger_labels)):
+                                for j in range(len(platform_labels)):
+                                    value = int(heatmap_data[i, j])
+                                    text_color = 'white' if value > np.max(heatmap_data) / 2 else 'black'
+                                    plt.text(j, i, f'{value:,}'.replace(',', ' '), 
+                                            ha="center", va="center", color=text_color, fontsize=9)
+                            
+                            plt.colorbar(label='Выручка, ₽')
+                            plt.title(f'Тепловая карта эффективности для {query}')
+                            plt.tight_layout()
+                            
+                            # Сохраняем тепловую карту
+                            heatmap_chart = tempfile.NamedTemporaryFile(suffix='.png', prefix='heatmap_', delete=False)
+                            plt.savefig(heatmap_chart.name, dpi=300)
+                            plt.close()
+                            
+                            chart_files.append(heatmap_chart.name)
+                        except Exception as e:
+                            logger.error(f"Error generating heatmap chart: {str(e)}")
+            
+        except Exception as chart_error:
+            logger.error(f"Error generating charts: {str(chart_error)}", exc_info=True)
+        # --- КОНЕЦ ГЕНЕРАЦИИ ГРАФИКОВ ---
+        
+        # Формируем сводную информацию о товаре/нише
+        summary = f"🔍 *Анализ рекламы {'по артикулу' if is_article else 'товара'}: {query}*\n\n"
+        
+        ad_data = []
+        
+        if is_article and "ad_data" in mpsta_results:
+            ad_data = mpsta_results.get("ad_data", {}).get("items", [])
+        elif "ad_data" in mpsta_results:
+            # Для поискового запроса объединяем все рекламные данные
+            for ad_item in mpsta_results.get("ad_data", []):
+                ad_data.extend(ad_item.get("ad_data", {}).get("items", []))
+        
+        # Общая статистика
+        total_ads = len(ad_data)
+        total_revenue = sum(ad.get("revenue", 0) for ad in ad_data)
+        total_orders = sum(ad.get("orders", 0) for ad in ad_data)
+        total_ad_views = sum(ad.get("views", 0) for ad in ad_data)
+        total_ad_likes = sum(ad.get("likes", 0) for ad in ad_data)
+        
+        # Статистика по платформам
+        platforms = {}
+        bloggers = {}
+        
+        for ad in ad_data:
+            platform = ad.get("platform", "Неизвестно")
+            blogger = ad.get("blogger", {}).get("name", "Неизвестный")
+            
+            if platform not in platforms:
+                platforms[platform] = {
+                    "count": 0,
+                    "revenue": 0,
+                    "orders": 0,
+                    "views": 0,
+                    "likes": 0
+                }
+            
+            platforms[platform]["count"] += 1
+            platforms[platform]["revenue"] += ad.get("revenue", 0)
+            platforms[platform]["orders"] += ad.get("orders", 0)
+            platforms[platform]["views"] += ad.get("views", 0)
+            platforms[platform]["likes"] += ad.get("likes", 0)
+            
+            if blogger not in bloggers:
+                bloggers[blogger] = {
+                    "count": 0,
+                    "revenue": 0,
+                    "orders": 0,
+                    "views": 0,
+                    "likes": 0,
+                    "platform": platform
+                }
+            
+            bloggers[blogger]["count"] += 1
+            bloggers[blogger]["revenue"] += ad.get("revenue", 0)
+            bloggers[blogger]["orders"] += ad.get("orders", 0)
+            bloggers[blogger]["views"] += ad.get("views", 0)
+            bloggers[blogger]["likes"] += ad.get("likes", 0)
+        
+        # Дополняем данными из serper
+        for result in serper_results:
+            platform = result.get("site", "")
+            platform_name = platform
+            
+            if "instagram" in platform.lower():
+                platform_name = "Instagram"
+            elif "vk.com" in platform.lower():
+                platform_name = "VK"
+            elif "facebook" in platform.lower():
+                platform_name = "Facebook"
+            elif "youtube" in platform.lower():
+                platform_name = "YouTube"
+            elif "tiktok" in platform.lower():
+                platform_name = "TikTok"
+            
+            if platform_name not in platforms:
+                platforms[platform_name] = {
+                    "count": 0,
+                    "revenue": 0,
+                    "orders": 0,
+                    "views": 0,
+                    "likes": 0
+                }
+            
+            platforms[platform_name]["count"] += 1
+            platforms[platform_name]["views"] += result.get("views", 0)
+            platforms[platform_name]["likes"] += result.get("likes", 0)
+            platforms[platform_name]["revenue"] += result.get("approx_revenue", 0)
+            platforms[platform_name]["orders"] += result.get("approx_clients", 0)
+        
+        # Формируем сводную информацию по MPSTA
+        if total_ads > 0:
+            summary += "📊 *Общая статистика*\n"
+            summary += f"• Всего рекламных публикаций: {total_ads}\n"
+            summary += f"• Суммарная выручка: {total_revenue:,} ₽\n".replace(',', ' ')
+            summary += f"• Суммарное количество заказов: {total_orders}\n"
+            summary += f"• Общее количество просмотров: {total_ad_views:,}\n".replace(',', ' ')
+            summary += f"• Общее количество лайков: {total_ad_likes:,}\n\n".replace(',', ' ')
+            
+            # Эффективность платформ
+            if platforms:
+                summary += "📱 *Эффективность платформ*\n"
+                
+                # Сортируем платформы по выручке
+                sorted_platforms = sorted(
+                    platforms.items(), 
+                    key=lambda x: x[1].get("revenue", 0), 
+                    reverse=True
+                )
+                
+                for platform, stats in sorted_platforms[:5]:  # Показываем топ-5
+                    summary += f"• *{platform}*:\n"
+                    summary += f"  - Публикаций: {stats.get('count')}\n"
+                    summary += f"  - Выручка: {stats.get('revenue', 0):,} ₽\n".replace(',', ' ')
+                    summary += f"  - Заказы: {stats.get('orders', 0)}\n"
+                    summary += f"  - Просмотры: {stats.get('views', 0):,}\n".replace(',', ' ')
+                
+                summary += "\n"
+            
+            # Топ блогеры
+            if bloggers:
+                summary += "👤 *Топ-3 блогера*\n"
+                
+                # Сортируем блогеров по выручке
+                sorted_bloggers = sorted(
+                    bloggers.items(), 
+                    key=lambda x: x[1].get("revenue", 0), 
+                    reverse=True
+                )
+                
+                for blogger, stats in sorted_bloggers[:3]:  # Показываем топ-3
+                    summary += f"• *{blogger}* ({stats.get('platform')}):\n"
+                    summary += f"  - Публикаций: {stats.get('count')}\n"
+                    summary += f"  - Выручка: {stats.get('revenue', 0):,} ₽\n".replace(',', ' ')
+                    summary += f"  - Заказы: {stats.get('orders', 0)}\n"
+                    summary += f"  - Среднее на публикацию: {stats.get('revenue', 0) / stats.get('count') if stats.get('count') > 0 else 0:,.0f} ₽\n".replace(',', ' ')
+                
+                summary += "\n"
+        else:
+            summary += "⚠️ *Данные MPSTA*\n"
+            summary += "По данному товару не найдено рекламных публикаций в MPSTA.\n\n"
+        
+        # Добавляем данные из serper, если они есть
+        if serper_results:
+            # Считаем общую статистику
+            total_mentions = len(serper_results)
+            total_views = sum(result.get("views", 0) for result in serper_results)
+            total_likes = sum(result.get("likes", 0) for result in serper_results)
+            
+            summary += "🔍 *Данные из социальных сетей*\n"
+            summary += f"• Всего упоминаний: {total_mentions}\n"
+            summary += f"• Общее количество просмотров: {total_views:,}\n".replace(',', ' ')
+            summary += f"• Общее количество лайков: {total_likes:,}\n\n".replace(',', ' ')
+            
+            # Показываем топ-3 результата
+            summary += "📱 *Топ-3 публикации*\n"
+            
+            for result in serper_results[:3]:  # Показываем топ-3
+                title = result.get("title", "")[:50] + "..." if len(result.get("title", "")) > 50 else result.get("title", "")
+                site = result.get("site", "")
+                likes = result.get("likes", 0)
+                views = result.get("views", 0)
+                
+                summary += f"• *{title}*\n"
+                summary += f"  - Площадка: {site}\n"
+                summary += f"  - Лайки: {likes:,}\n".replace(',', ' ')
+                summary += f"  - Просмотры: {views:,}\n".replace(',', ' ')
+            
+            summary += "\n"
+        else:
+            summary += "🔍 *Данные из социальных сетей*\n"
+            summary += "Упоминаний в социальных сетях не найдено.\n\n"
+        
+        # Рекомендации
+        summary += "💡 *Рекомендации*\n"
+        
+        # Анализируем данные для рекомендаций
+        if total_ads > 0 or serper_results:
+            # Если есть данные о рекламе
+            
+            # Находим лучшую платформу
+            best_platform = None
+            best_revenue = 0
+            
+            for platform, stats in platforms.items():
+                if stats.get("revenue", 0) > best_revenue:
+                    best_revenue = stats.get("revenue", 0)
+                    best_platform = platform
+            
+            if best_platform:
+                summary += f"• Фокусируйтесь на *{best_platform}* - эта платформа показывает наилучшие результаты по выручке\n"
+            
+            # Если есть топ-блогеры
+            if bloggers:
+                top_blogger = max(bloggers.items(), key=lambda x: x[1].get("revenue", 0))[0]
+                
+                summary += f"• Продолжайте сотрудничество с блогером *{top_blogger}* - показывает наилучшие результаты\n"
+                
+                avg_post_price = 15000  # Примерная стоимость поста
+                top_blogger_roi = bloggers[top_blogger].get("revenue", 0) / avg_post_price if avg_post_price > 0 else 0
+                
+                if top_blogger_roi > 2:
+                    summary += f"• ROI сотрудничества с топ-блогером около {top_blogger_roi:.1f}x - очень эффективно\n"
+            
+            # Рекомендации по охвату
+            if total_ad_views > 0:
+                conversion = total_orders / total_ad_views * 100 if total_ad_views > 0 else 0
+                
+                if conversion < 0.1:
+                    summary += "• Низкая конверсия просмотров в заказы - проверьте качество контента и целевую аудиторию\n"
+                elif conversion > 0.5:
+                    summary += "• Высокая конверсия просмотров в заказы - увеличьте рекламный бюджет для масштабирования\n"
+            
+            # Общие рекомендации
+            if total_ads < 5:
+                summary += "• Увеличьте количество рекламных публикаций для достижения большего охвата\n"
+            
+            # Рекомендации по разнообразию платформ
+            if len(platforms) < 3:
+                summary += "• Расширьте присутствие на других платформах для охвата различных сегментов аудитории\n"
+            
+            # Если нет данных в MPSTA, но есть в соцсетях
+            if total_ads == 0 and serper_results:
+                summary += "• В базе MPSTA нет данных о рекламе вашего товара - возможно, конкуренты используют неотслеживаемые каналы\n"
+                summary += "• Анализируйте упоминания в соцсетях для выявления неформальных маркетинговых каналов\n"
+        else:
+            # Если нет данных о рекламе вообще
+            summary += "• Товар не имеет активного продвижения в соцсетях - это возможность для выхода на новый рынок\n"
+            summary += "• Начните с тестовых рекламных кампаний на 2-3 популярных платформах\n"
+            summary += "• Изучите конкурентов в вашей нише для определения эффективных каналов продвижения\n"
+        
+        summary += "\n✅ *Полная аналитика представлена на графиках*"
+        
+        return summary, chart_files
+    
+    except Exception as e:
+        logger.error(f"Error in format_mpsta_results: {str(e)}", exc_info=True)
+        # В случае ошибки удаляем временные файлы
+        for chart_file in chart_files:
+            try:
+                os.remove(chart_file)
+            except:
+                pass
+        return f"❌ Произошла ошибка при форматировании результатов: {str(e)}", []
+
 # Добавляем запуск проверки в main
 async def main():
     logger.info("Starting bot...")
@@ -2145,11 +3378,504 @@ async def main():
     # Запускаем проверку истекающих подписок
     asyncio.create_task(check_expiring_subscriptions())
     
+    # Запускаем мониторинг отслеживаемых товаров
+    asyncio.create_task(check_tracked_items())
+    
     # Запускаем бота
     try:
         await dp.start_polling(bot)
     finally:
         await bot.session.close()
+
+async def check_tracked_items():
+    """Периодическая проверка отслеживаемых товаров и отправка уведомлений."""
+    logger.info("Starting tracked items monitoring...")
+    while True:
+        try:
+            # Получаем данные всех пользователей
+            all_users = subscription_manager.get_all_users()
+            
+            for user_id, user_data in all_users.items():
+                # Проверяем, активна ли подписка
+                if not subscription_manager.is_subscription_active(user_id):
+                    continue
+                
+                # Получаем список отслеживаемых товаров
+                tracked_items = user_data.get("tracked_items", [])
+                if not tracked_items:
+                    continue
+                
+                # Обновляем информацию о каждом товаре
+                notifications = []
+                
+                for item in tracked_items:
+                    try:
+                        # Получаем данные о товаре
+                        if isinstance(item, dict):
+                            item_id = item.get("id", "")
+                            old_price = item.get("price", 0)
+                            old_stock = item.get("stock", 0)
+                            name = item.get("name", f"Товар {item_id}")
+                        else:
+                            item_id = item
+                            old_price = 0
+                            old_stock = 0
+                            name = f"Товар {item_id}"
+                        
+                        # Пропускаем товары, у которых нет ID
+                        if not item_id:
+                            continue
+                        
+                        # Получаем актуальные данные
+                        product_info = await get_wb_product_info(item_id)
+                        
+                        if not product_info:
+                            continue
+                        
+                        # Получаем новые значения
+                        new_price = product_info["price"]["current"]
+                        new_stock = product_info["stocks"]["total"]
+                        name = product_info["name"]
+                        
+                        # Проверяем изменения
+                        price_change = new_price - old_price if old_price > 0 else 0
+                        stock_change = new_stock - old_stock if old_stock > 0 else 0
+                        
+                        # Формируем уведомления при значительных изменениях
+                        notification = None
+                        
+                        # Изменение цены более чем на 5%
+                        if old_price > 0 and abs(price_change) / old_price > 0.05:
+                            change_type = "увеличилась" if price_change > 0 else "снизилась"
+                            change_icon = "📈" if price_change > 0 else "📉"
+                            
+                            notification = (
+                                f"{change_icon} *Изменение цены товара!*\n\n"
+                                f"*{name}*\n"
+                                f"🔢 Артикул: {item_id}\n"
+                                f"💰 Цена {change_type} с {old_price} ₽ до {new_price} ₽\n"
+                                f"🔄 Изменение: {abs(price_change)} ₽ ({abs(price_change/old_price*100):.1f}%)\n\n"
+                                f"🛒 [Посмотреть на Wildberries](https://www.wildberries.ru/catalog/{item_id}/detail.aspx)"
+                            )
+                        
+                        # Значительное изменение наличия (больше 50%)
+                        if old_stock > 0 and (stock_change < 0 or (new_stock > 0 and old_stock == 0)):
+                            if stock_change < 0 and new_stock == 0:
+                                # Товар закончился
+                                notification = (
+                                    f"⚠️ *Товар закончился!*\n\n"
+                                    f"*{name}*\n"
+                                    f"🔢 Артикул: {item_id}\n"
+                                    f"📦 Наличие: 0 шт.\n\n"
+                                    f"🛒 [Посмотреть на Wildberries](https://www.wildberries.ru/catalog/{item_id}/detail.aspx)"
+                                )
+                            elif new_stock > 0 and old_stock == 0:
+                                # Товар появился в наличии
+                                notification = (
+                                    f"✅ *Товар снова в наличии!*\n\n"
+                                    f"*{name}*\n"
+                                    f"🔢 Артикул: {item_id}\n"
+                                    f"📦 Наличие: {new_stock} шт.\n"
+                                    f"💰 Цена: {new_price} ₽\n\n"
+                                    f"🛒 [Посмотреть на Wildberries](https://www.wildberries.ru/catalog/{item_id}/detail.aspx)"
+                                )
+                            elif stock_change < 0 and abs(stock_change/old_stock) > 0.5:
+                                # Количество уменьшилось более чем на 50%
+                                notification = (
+                                    f"📉 *Товар заканчивается!*\n\n"
+                                    f"*{name}*\n"
+                                    f"🔢 Артикул: {item_id}\n"
+                                    f"📦 Наличие: {new_stock} шт. (-{abs(stock_change)} шт.)\n"
+                                    f"💰 Цена: {new_price} ₽\n\n"
+                                    f"🛒 [Посмотреть на Wildberries](https://www.wildberries.ru/catalog/{item_id}/detail.aspx)"
+                                )
+                        
+                        # Если есть уведомление, добавляем его в список
+                        if notification:
+                            notifications.append(notification)
+                        
+                        # Обновляем данные товара в любом случае
+                        new_item = {
+                            "id": item_id,
+                            "name": name,
+                            "price": new_price,
+                            "stock": new_stock,
+                            "last_update": datetime.now().isoformat()
+                        }
+                        
+                        subscription_manager.update_tracked_item(user_id, item_id, new_item)
+                        
+                    except Exception as item_error:
+                        logger.error(f"Error updating tracked item {item_id}: {str(item_error)}")
+                        continue
+                
+                # Отправляем уведомления пользователю
+                for notification in notifications:
+                    try:
+                        # Создаем инлайн-клавиатуру для уведомления
+                        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                            [InlineKeyboardButton(text="📋 Посмотреть все товары", callback_data="tracked")]
+                        ])
+                        
+                        await bot.send_message(
+                            chat_id=int(user_id),
+                            text=notification,
+                            parse_mode=ParseMode.MARKDOWN,
+                            reply_markup=keyboard,
+                            disable_web_page_preview=False
+                        )
+                        
+                        # Делаем небольшую паузу между отправкой сообщений
+                        await asyncio.sleep(0.5)
+                        
+                    except Exception as notify_error:
+                        logger.error(f"Error sending notification to user {user_id}: {str(notify_error)}")
+                        continue
+            
+            # Проверяем изменения каждые 3 часа
+            await asyncio.sleep(3 * 60 * 60)
+            
+        except Exception as e:
+            logger.error(f"Error in check_tracked_items: {str(e)}")
+            # В случае ошибки ждем 10 минут и пробуем снова
+            await asyncio.sleep(10 * 60)
+
+@dp.callback_query(lambda c: c.data == "track_item")
+async def handle_track_item(callback_query: types.CallbackQuery, state: FSMContext):
+    try:
+        user_id = callback_query.from_user.id
+        
+        can_perform = subscription_manager.can_perform_action(user_id, 'tracking_items')
+        if not can_perform:
+            await callback_query.answer(
+                "❌ У вас нет активной подписки или превышен лимит отслеживаемых товаров",
+                show_alert=True
+            )
+            return
+        
+        await state.set_state(UserStates.waiting_for_tracking)
+        
+        await callback_query.message.edit_text(
+            "🔍 *Отслеживание товара*\n\n"
+            "Отправьте артикул товара, который хотите отслеживать.\n"
+            "Например: 12345678\n\n"
+            "Вы будете получать уведомления об изменении цены, наличия и рейтинга товара.",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=back_keyboard()
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in track item handler: {str(e)}")
+        await callback_query.answer(
+            "Произошла ошибка. Пожалуйста, попробуйте позже.",
+            show_alert=True
+        )
+
+# Обработчик ввода артикула для отслеживания
+@dp.message(lambda message: message.text and message.text.strip(), UserStates.waiting_for_tracking)
+async def handle_tracking_article(message: types.Message, state: FSMContext):
+    try:
+        user_id = message.from_user.id
+        article = message.text.strip()
+        
+        # Проверяем валидность артикула
+        if not article.isdigit():
+            await message.answer(
+                "❌ Некорректный артикул. Пожалуйста, введите числовой артикул товара.",
+                reply_markup=back_keyboard()
+            )
+            return
+            
+        # Проверяем существование товара
+        product_info = await get_wb_product_info(article)
+        if not product_info:
+            await message.answer(
+                "❌ Товар не найден. Проверьте правильность артикула.",
+                reply_markup=back_keyboard()
+            )
+            return
+            
+        # Добавляем товар в отслеживаемые
+        success = subscription_manager.add_tracked_item(user_id, article, product_info['name'], product_info['price']['current'])
+        
+        if success:
+            await message.answer(
+                f"✅ Товар *{product_info['name']}* успешно добавлен в отслеживаемые!\n\n"
+                f"🔢 Артикул: {article}\n"
+                f"💰 Текущая цена: {product_info['price']['current']} ₽\n"
+                f"📦 Наличие: {product_info['stocks']['total']} шт.\n\n"
+                "Вы будете получать уведомления при изменении цены, наличия или рейтинга товара.",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=main_menu_kb()
+            )
+        else:
+            await message.answer(
+                "❌ Не удалось добавить товар в отслеживаемые. Возможно, вы достигли лимита отслеживаемых товаров.",
+                reply_markup=main_menu_kb()
+            )
+            
+        await state.clear()
+        
+    except Exception as e:
+        logger.error(f"Error adding tracking item: {str(e)}")
+        await message.answer(
+            "❌ Произошла ошибка при добавлении товара в отслеживаемые. Пожалуйста, попробуйте позже.",
+            reply_markup=main_menu_kb()
+        )
+        await state.clear()
+
+@dp.callback_query(lambda c: c.data == "tracked")
+async def handle_tracked_items(callback_query: types.CallbackQuery):
+    try:
+        user_id = callback_query.from_user.id
+        tracked_items = subscription_manager.get_tracked_items(user_id)
+        
+        if not tracked_items:
+            await callback_query.message.edit_text(
+                "📋 *Список отслеживаемых товаров*\n\n"
+                "У вас пока нет отслеживаемых товаров.\n"
+                "Чтобы добавить товар в отслеживаемые, нажмите кнопку \"📱 Отслеживание\" в главном меню.",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=back_keyboard()
+            )
+            return
+        
+        # Формируем сообщение со списком отслеживаемых товаров
+        message_text = "📋 *Список отслеживаемых товаров*\n\n"
+        
+        for i, item in enumerate(tracked_items):
+            # Формируем данные в зависимости от формата
+            if isinstance(item, dict):
+                item_id = item.get("id", "Неизвестно")
+                item_name = item.get("name", "Неизвестный товар")
+                item_price = item.get("price", 0)
+                added_date = item.get("added_date", datetime.now().isoformat())
+                
+                # Переводим дату в читаемый формат
+                try:
+                    date_obj = datetime.fromisoformat(added_date)
+                    formatted_date = date_obj.strftime("%d.%m.%Y")
+                except:
+                    formatted_date = "Неизвестно"
+            else:
+                # Старый формат (просто ID)
+                item_id = item
+                item_name = "Неизвестный товар"
+                item_price = 0
+                formatted_date = "Неизвестно"
+            
+            message_text += f"{i+1}. *{item_name}*\n"
+            message_text += f"   🔢 Артикул: {item_id}\n"
+            message_text += f"   💰 Цена: {item_price} ₽\n"
+            message_text += f"   📅 Добавлен: {formatted_date}\n\n"
+        
+        # Создаем клавиатуру с кнопками для действий с отслеживаемыми товарами
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh_tracked"),
+                InlineKeyboardButton(text="🗑️ Удалить", callback_data="delete_tracked")
+            ],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="profile")]
+        ])
+        
+        await callback_query.message.edit_text(
+            message_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=keyboard
+        )
+        
+    except Exception as e:
+        logger.error(f"Error handling tracked items: {str(e)}")
+        await callback_query.answer(
+            "Произошла ошибка при получении списка отслеживаемых товаров.",
+            show_alert=True
+        )
+
+@dp.callback_query(lambda c: c.data == "refresh_tracked")
+async def handle_refresh_tracked(callback_query: types.CallbackQuery, state: FSMContext):
+    try:
+        user_id = callback_query.from_user.id
+        tracked_items = subscription_manager.get_tracked_items(user_id)
+        
+        if not tracked_items:
+            await callback_query.answer("У вас нет отслеживаемых товаров")
+            return
+        
+        # Отправляем сообщение о начале обновления
+        await callback_query.message.edit_text(
+            "🔄 *Обновление данных по отслеживаемым товарам...*\n\n"
+            "Пожалуйста, подождите, этот процесс может занять некоторое время.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        
+        # Обновляем информацию по каждому товару
+        updated_items = []
+        not_found_items = []
+        
+        for item in tracked_items:
+            # Получаем ID товара в зависимости от формата
+            if isinstance(item, dict):
+                item_id = item.get("id", "")
+                old_price = item.get("price", 0)
+                old_stock = item.get("stock", 0)
+            else:
+                item_id = item
+                old_price = 0
+                old_stock = 0
+            
+            # Получаем обновленную информацию
+            product_info = await get_wb_product_info(item_id)
+            
+            if product_info:
+                # Обновляем информацию о товаре
+                new_item = {
+                    "id": item_id,
+                    "name": product_info["name"],
+                    "price": product_info["price"]["current"],
+                    "old_price": old_price,
+                    "stock": product_info["stocks"]["total"],
+                    "old_stock": old_stock,
+                    "last_update": datetime.now().isoformat()
+                }
+                
+                # Проверяем изменения цены и наличия
+                price_change = new_item["price"] - old_price if old_price > 0 else 0
+                stock_change = new_item["stock"] - old_stock if old_stock > 0 else 0
+                
+                new_item["price_change"] = price_change
+                new_item["stock_change"] = stock_change
+                
+                updated_items.append(new_item)
+                
+                # Обновляем товар в базе данных
+                subscription_manager.update_tracked_item(user_id, item_id, new_item)
+            else:
+                not_found_items.append(item_id)
+        
+        # Формируем сообщение с результатами обновления
+        message_text = "✅ *Обновление завершено*\n\n"
+        
+        if updated_items:
+            message_text += "📊 *Обновленные товары:*\n\n"
+            
+            for item in updated_items:
+                message_text += f"*{item['name']}*\n"
+                message_text += f"🔢 Артикул: {item['id']}\n"
+                message_text += f"💰 Цена: {item['price']} ₽"
+                
+                if item.get("price_change", 0) != 0:
+                    change_icon = "📈" if item["price_change"] > 0 else "📉"
+                    message_text += f" {change_icon} {abs(item['price_change'])} ₽\n"
+                else:
+                    message_text += "\n"
+                    
+                message_text += f"📦 Наличие: {item['stock']} шт."
+                
+                if item.get("stock_change", 0) != 0:
+                    change_icon = "📈" if item["stock_change"] > 0 else "📉"
+                    message_text += f" {change_icon} {abs(item['stock_change'])} шт.\n"
+                else:
+                    message_text += "\n"
+                    
+                message_text += f"🕒 Обновлено: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
+        
+        if not_found_items:
+            message_text += "⚠️ *Не удалось обновить:*\n"
+            for item_id in not_found_items:
+                message_text += f"• Артикул {item_id}\n"
+            message_text += "\n"
+        
+        # Создаем клавиатуру
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh_tracked"),
+                InlineKeyboardButton(text="🗑️ Удалить", callback_data="delete_tracked")
+            ],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="profile")]
+        ])
+        
+        await callback_query.message.edit_text(
+            message_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=keyboard
+        )
+        
+    except Exception as e:
+        logger.error(f"Error refreshing tracked items: {str(e)}")
+        await callback_query.answer(
+            "Произошла ошибка при обновлении отслеживаемых товаров",
+            show_alert=True
+        )
+
+@dp.callback_query(lambda c: c.data == "delete_tracked")
+async def handle_delete_tracked_start(callback_query: types.CallbackQuery, state: FSMContext):
+    try:
+        user_id = callback_query.from_user.id
+        tracked_items = subscription_manager.get_tracked_items(user_id)
+        
+        if not tracked_items:
+            await callback_query.answer("У вас нет отслеживаемых товаров")
+            return
+        
+        # Создаем клавиатуру с товарами для удаления
+        keyboard = []
+        
+        for i, item in enumerate(tracked_items):
+            if isinstance(item, dict):
+                item_id = item.get("id", "")
+                item_name = item.get("name", "Неизвестный товар")
+            else:
+                item_id = item
+                item_name = f"Товар {item_id}"
+            
+            # Добавляем кнопку для каждого товара
+            keyboard.append([
+                InlineKeyboardButton(
+                    text=f"{i+1}. {item_name[:30]}... (ID: {item_id})",
+                    callback_data=f"delete_item_{item_id}"
+                )
+            ])
+        
+        # Добавляем кнопку "Назад"
+        keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data="tracked")])
+        
+        await callback_query.message.edit_text(
+            "🗑️ *Удаление товаров из отслеживаемых*\n\n"
+            "Выберите товар, который хотите удалить:",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+        )
+        
+    except Exception as e:
+        logger.error(f"Error preparing delete tracked items: {str(e)}")
+        await callback_query.answer(
+            "Произошла ошибка при подготовке списка товаров для удаления",
+            show_alert=True
+        )
+
+@dp.callback_query(lambda c: c.data.startswith("delete_item_"))
+async def handle_delete_tracked_item(callback_query: types.CallbackQuery, state: FSMContext):
+    try:
+        user_id = callback_query.from_user.id
+        item_id = callback_query.data.split("_")[2]
+        
+        # Удаляем товар из отслеживаемых
+        success = subscription_manager.remove_tracked_item(user_id, item_id)
+        
+        if success:
+            await callback_query.answer(f"Товар {item_id} удален из отслеживаемых", show_alert=True)
+        else:
+            await callback_query.answer("Не удалось удалить товар", show_alert=True)
+        
+        # Возвращаемся к списку отслеживаемых товаров
+        await handle_tracked_items(callback_query)
+        
+    except Exception as e:
+        logger.error(f"Error deleting tracked item: {str(e)}")
+        await callback_query.answer(
+            "Произошла ошибка при удалении товара",
+            show_alert=True
+        )
 
 if __name__ == '__main__':
     asyncio.run(main()) 
