@@ -158,32 +158,78 @@ class SubscriptionManager:
         logger.info(f"Balance updated successfully for user {user_id}")
     
     def add_tracked_item(self, user_id: int, article: str,
-                        price: float, sales: int, rating: float) -> None:
+                        price: float, sales: int, rating: float) -> bool:
         """Добавление товара для отслеживания"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-        INSERT INTO tracked_items 
-        (user_id, article, last_price, last_sales, last_rating)
-        VALUES (?, ?, ?, ?, ?)
-        ''', (user_id, article, price, sales, rating))
-        
-        conn.commit()
-        conn.close()
+        try:
+            # Проверяем лимиты на отслеживание товаров
+            can_track = self.can_perform_action(user_id, 'tracking_items')
+            if not can_track:
+                logger.info(f"User {user_id} cannot track more items (limit reached)")
+                return False
+            
+            # Проверяем, не отслеживается ли уже этот товар
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+            SELECT id FROM tracked_items 
+            WHERE user_id = ? AND article = ?
+            ''', (user_id, article))
+            
+            existing = cursor.fetchone()
+            if existing:
+                logger.info(f"Item {article} is already tracked by user {user_id}")
+                conn.close()
+                return True  # Товар уже отслеживается, считаем это успехом
+            
+            # Добавляем товар для отслеживания
+            cursor.execute('''
+            INSERT INTO tracked_items 
+            (user_id, article, last_price, last_sales, last_rating)
+            VALUES (?, ?, ?, ?, ?)
+            ''', (user_id, article, price, sales, rating))
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Successfully added tracked item {article} for user {user_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error adding tracked item: {e}")
+            return False
     
-    def remove_tracked_item(self, user_id: int, article: str) -> None:
+    def remove_tracked_item(self, user_id: int, article: str) -> bool:
         """Удаление отслеживаемого товара"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-        DELETE FROM tracked_items 
-        WHERE user_id = ? AND article = ?
-        ''', (user_id, article))
-        
-        conn.commit()
-        conn.close()
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Проверяем существование товара
+            cursor.execute('''
+            SELECT id FROM tracked_items 
+            WHERE user_id = ? AND article = ?
+            ''', (user_id, article))
+            
+            existing = cursor.fetchone()
+            if not existing:
+                logger.info(f"Item {article} is not tracked by user {user_id}")
+                conn.close()
+                return False
+            
+            # Удаляем товар
+            cursor.execute('''
+            DELETE FROM tracked_items 
+            WHERE user_id = ? AND article = ?
+            ''', (user_id, article))
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Successfully removed tracked item {article} for user {user_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error removing tracked item: {e}")
+            return False
     
     def get_tracked_items(self, user_id: int) -> List[Dict]:
         """Получение списка отслеживаемых товаров"""
@@ -541,4 +587,73 @@ class SubscriptionManager:
         ]
         
         logger.info(f"Found {len(result)} expiring subscriptions")
+        return result
+    
+    def get_all_users(self) -> dict:
+        """Получение всех пользователей и их данных"""
+        logger.info("Getting all users")
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Получаем всех пользователей
+        cursor.execute("SELECT user_id FROM users")
+        users = cursor.fetchall()
+        conn.close()
+        
+        # Формируем результат в виде словаря
+        result = {}
+        for user_row in users:
+            user_id = str(user_row[0])
+            
+            # Получаем отслеживаемые товары для пользователя
+            tracked_items = self.get_tracked_items(int(user_id))
+            
+            # Получаем тип подписки
+            subscription = self.get_subscription(int(user_id))
+            
+            # Формируем данные пользователя в аналогичном JSON-версии формате
+            result[user_id] = {
+                "tracked_items": tracked_items,
+                "subscription": subscription
+            }
+        
         return result 
+    
+    def update_tracked_item(self, user_id: int, article: str, new_data: dict) -> bool:
+        """Обновление информации о товаре в списке отслеживаемых."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Проверяем существование товара
+            cursor.execute('''
+            SELECT id FROM tracked_items 
+            WHERE user_id = ? AND article = ?
+            ''', (user_id, article))
+            
+            existing = cursor.fetchone()
+            if not existing:
+                logger.info(f"Item {article} is not tracked by user {user_id}")
+                conn.close()
+                return False
+            
+            # Извлекаем данные для обновления
+            price = new_data.get('price', 0)
+            sales = new_data.get('stock', 0)  # Используем stock как sales для совместимости
+            rating = new_data.get('rating', 0.0)
+            
+            # Обновляем товар
+            cursor.execute('''
+            UPDATE tracked_items 
+            SET last_price = ?, last_sales = ?, last_rating = ?
+            WHERE user_id = ? AND article = ?
+            ''', (price, sales, rating, user_id, article))
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Successfully updated tracked item {article} for user {user_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error updating tracked item: {e}")
+            return False 

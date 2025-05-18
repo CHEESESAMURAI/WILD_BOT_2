@@ -144,7 +144,7 @@ def main_menu_kb():
             InlineKeyboardButton(text="📈 Анализ ниши", callback_data="niche_analysis")
         ],
         [
-            InlineKeyboardButton(text="🌐 Глобальный поиск", callback_data="product_search"),
+            InlineKeyboardButton(text="🌐 Анализ внешки", callback_data="product_search"),
             InlineKeyboardButton(text="📱 Отслеживание", callback_data="track_item")
         ],
         [
@@ -192,9 +192,9 @@ async def help_callback(callback_query: types.CallbackQuery):
         "*3. Отслеживание:*\n"
         "   • Добавьте товары\n"
         "   • Получайте уведомления\n\n"
-        "*4. Поиск товаров:*\n"
+        "*4. Анализ внешки:*\n"
         "   • Задайте параметры\n"
-        "   • Найдите прибыльные позиции\n\n"
+        "   • Найдите упоминания и анализ в соцсетях\n\n"
         "*Стоимость операций:*\n"
         f"• Анализ товара: {COSTS['product_analysis']}₽\n"
         f"• Анализ тренда: {COSTS['trend_analysis']}₽\n"
@@ -210,48 +210,73 @@ async def help_callback(callback_query: types.CallbackQuery):
 # Обработчик кнопки "Личный кабинет"
 @dp.callback_query(lambda c: c.data == "profile")
 async def profile_callback(callback_query: types.CallbackQuery):
-    user_id = callback_query.from_user.id
-    logger.info(f"User {user_id} requested profile")
-    
-    balance = subscription_manager.get_user_balance(user_id)
-    tracked_items = subscription_manager.get_tracked_items(user_id)
-    subscription = subscription_manager.get_subscription(user_id)
-    subscription_stats = subscription_manager.get_subscription_stats(user_id)
-    
-    subscription_info = "❌ Нет активной подписки"
-    if subscription_stats:
-        expiry_date = datetime.fromisoformat(subscription_stats['expiry_date'])
-        days_left = (expiry_date - datetime.now()).days
-        subscription_info = (
-            f"📅 *Текущая подписка:* {subscription}\n"
-            f"⏳ Осталось дней: {days_left}\n\n"
-            "*Лимиты:*\n"
+    try:
+        user_id = callback_query.from_user.id
+        logger.info(f"User {user_id} requested profile")
+        
+        # Получаем основные данные пользователя
+        balance = subscription_manager.get_user_balance(user_id)
+        tracked_items = subscription_manager.get_tracked_items(user_id)
+        subscription = subscription_manager.get_subscription(user_id)
+        
+        # Формируем данные о подписке
+        subscription_info = "❌ Нет активной подписки"
+        
+        # Проверяем активность подписки
+        is_active = subscription_manager.is_subscription_active(user_id)
+        
+        if is_active and subscription:
+            # Получаем дату окончания подписки
+            try:
+                expiry_date_str = subscription_manager.get_subscription_end_date(user_id)
+                if expiry_date_str:
+                    expiry_date = datetime.fromisoformat(expiry_date_str.replace(' ', 'T'))
+                    days_left = max(0, (expiry_date - datetime.now()).days)
+                    
+                    subscription_info = (
+                        f"📅 *Текущая подписка:* {subscription}\n"
+                        f"⏳ Осталось дней: {days_left}\n\n"
+                        "*Лимиты:*\n"
+                    )
+                    
+                    # Получаем лимиты подписки
+                    limits = SUBSCRIPTION_LIMITS.get(subscription, {})
+                    for action, limit in limits.items():
+                        limit_display = "∞" if limit == float('inf') else limit
+                        subscription_info += f"• {action}: {limit_display}\n"
+            except Exception as e:
+                logger.error(f"Error processing subscription date: {e}")
+                subscription_info = f"📅 *Текущая подписка:* {subscription}\n"
+        
+        # Собираем текст профиля
+        profile_text = (
+            f"👤 *Личный кабинет*\n\n"
+            f"💰 Баланс: {balance}₽\n"
+            f"📊 Отслеживаемых товаров: {len(tracked_items) if isinstance(tracked_items, list) else 0}\n\n"
+            f"{subscription_info}"
         )
-        for action, data in subscription_stats['actions'].items():
-            limit = "∞" if data['limit'] == float('inf') else data['limit']
-            subscription_info += f"• {action}: {data['used']}/{limit}\n"
-    
-    profile_text = (
-        f"👤 *Личный кабинет*\n\n"
-        f"💰 Баланс: {balance}₽\n"
-        f"📊 Отслеживаемых товаров: {len(tracked_items)}\n\n"
-        f"{subscription_info}"
-    )
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="📊 Мои товары", callback_data="tracked"),
-            InlineKeyboardButton(text="💳 Пополнить", callback_data="add_funds")
-        ],
-        [InlineKeyboardButton(text="📅 Подписка", callback_data="subscription")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_main")]
-    ])
-    
-    await callback_query.message.edit_text(
-        profile_text,
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=keyboard
-    )
+        
+        # Создаем клавиатуру
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📊 Мои товары", callback_data="tracked"),
+                InlineKeyboardButton(text="💳 Пополнить", callback_data="add_funds")
+            ],
+            [InlineKeyboardButton(text="📅 Подписка", callback_data="subscription")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_main")]
+        ])
+        
+        await callback_query.message.edit_text(
+            profile_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=keyboard
+        )
+    except Exception as e:
+        logger.error(f"Error in profile_callback: {e}")
+        await callback_query.message.edit_text(
+            "❌ Произошла ошибка при открытии личного кабинета. Пожалуйста, попробуйте позже.",
+            reply_markup=back_keyboard()
+        )
 
 # Обработчик кнопки "Пополнить баланс"
 @dp.callback_query(lambda c: c.data == "add_funds")
@@ -356,7 +381,7 @@ async def handle_global_search(callback_query: types.CallbackQuery, state: FSMCo
         subscription = subscription_manager.get_subscription(user_id)
         if not subscription or not subscription_manager.is_subscription_active(user_id):
             await callback_query.answer(
-                "❌ У вас нет активной подписки. Пожалуйста, оформите подписку для доступа к глобальному поиску.",
+                "❌ У вас нет активной подписки. Пожалуйста, оформите подписку для доступа к анализу внешки.",
                 show_alert=True
             )
             return
@@ -364,7 +389,7 @@ async def handle_global_search(callback_query: types.CallbackQuery, state: FSMCo
         await state.set_state(UserStates.waiting_for_search)
         
         await callback_query.message.edit_text(
-            "🌐 *Глобальный поиск и анализ рекламы*\n\n"
+            "🌐 *Анализ внешки и рекламы*\n\n"
             "Введите артикул товара или название для анализа.\n"
             "Например: `176409037` или `Носки`\n\n"
             "🔍 Анализ будет проведен с использованием API MPSTA:\n"
@@ -413,9 +438,9 @@ async def help_handler(message: types.Message):
         "*3. Отслеживание:*\n"
         "   • Добавьте товары\n"
         "   • Получайте уведомления\n\n"
-        "*4. Поиск товаров:*\n"
+        "*4. Анализ внешки:*\n"
         "   • Задайте параметры\n"
-        "   • Найдите прибыльные позиции\n\n"
+        "   • Найдите упоминания и анализ в соцсетях\n\n"
         "*Стоимость операций:*\n"
         f"• Анализ товара: {COSTS['product_analysis']}₽\n"
         f"• Анализ тренда: {COSTS['trend_analysis']}₽\n"
@@ -447,44 +472,69 @@ async def balance_handler(message: types.Message):
 
 @dp.message(Command("profile"))
 async def profile_handler(message: types.Message):
-    user_id = message.from_user.id
-    logger.info(f"User {user_id} requested profile")
-    
-    balance = subscription_manager.get_user_balance(user_id)
-    tracked_items = subscription_manager.get_tracked_items(user_id)
-    subscription = subscription_manager.get_subscription(user_id)
-    subscription_stats = subscription_manager.get_subscription_stats(user_id)
-    
-    # Форматируем информацию о подписке
-    subscription_info = "❌ Нет активной подписки"
-    if subscription_stats:
-        expiry_date = datetime.fromisoformat(subscription_stats['expiry_date'])
-        days_left = (expiry_date - datetime.now()).days
-        subscription_info = (
-            f"📅 *Текущая подписка:* {subscription}\n"
-            f"⏳ Осталось дней: {days_left}\n\n"
-            "*Лимиты:*\n"
+    try:
+        user_id = message.from_user.id
+        logger.info(f"User {user_id} requested profile")
+        
+        # Получаем основные данные пользователя
+        balance = subscription_manager.get_user_balance(user_id)
+        tracked_items = subscription_manager.get_tracked_items(user_id)
+        subscription = subscription_manager.get_subscription(user_id)
+        
+        # Формируем данные о подписке
+        subscription_info = "❌ Нет активной подписки"
+        
+        # Проверяем активность подписки
+        is_active = subscription_manager.is_subscription_active(user_id)
+        
+        if is_active and subscription:
+            # Получаем дату окончания подписки
+            try:
+                expiry_date_str = subscription_manager.get_subscription_end_date(user_id)
+                if expiry_date_str:
+                    expiry_date = datetime.fromisoformat(expiry_date_str.replace(' ', 'T'))
+                    days_left = max(0, (expiry_date - datetime.now()).days)
+                    
+                    subscription_info = (
+                        f"📅 *Текущая подписка:* {subscription}\n"
+                        f"⏳ Осталось дней: {days_left}\n\n"
+                        "*Лимиты:*\n"
+                    )
+                    
+                    # Получаем лимиты подписки
+                    limits = SUBSCRIPTION_LIMITS.get(subscription, {})
+                    for action, limit in limits.items():
+                        limit_display = "∞" if limit == float('inf') else limit
+                        subscription_info += f"• {action}: {limit_display}\n"
+            except Exception as e:
+                logger.error(f"Error processing subscription date: {e}")
+                subscription_info = f"📅 *Текущая подписка:* {subscription}\n"
+        
+        # Собираем текст профиля
+        profile_text = (
+            f"👤 *Личный кабинет*\n\n"
+            f"💰 Баланс: {balance}₽\n"
+            f"📊 Отслеживаемых товаров: {len(tracked_items) if isinstance(tracked_items, list) else 0}\n\n"
+            f"{subscription_info}"
         )
-        for action, data in subscription_stats['actions'].items():
-            limit = "∞" if data['limit'] == float('inf') else data['limit']
-            subscription_info += f"• {action}: {data['used']}/{limit}\n"
-    
-    profile_text = (
-        f"👤 *Личный кабинет*\n\n"
-        f"💰 Баланс: {balance}₽\n"
-        f"📊 Отслеживаемых товаров: {len(tracked_items)}\n\n"
-        f"{subscription_info}"
-    )
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="📊 Мои товары", callback_data="tracked"),
-            InlineKeyboardButton(text="💳 Пополнить", callback_data="add_funds")
-        ],
-        [InlineKeyboardButton(text="📅 Подписка", callback_data="subscription")]
-    ])
-    
-    await message.answer(profile_text, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
+        
+        # Создаем клавиатуру
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📊 Мои товары", callback_data="tracked"),
+                InlineKeyboardButton(text="💳 Пополнить", callback_data="add_funds")
+            ],
+            [InlineKeyboardButton(text="📅 Подписка", callback_data="subscription")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_main")]
+        ])
+        
+        await message.answer(profile_text, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
+    except Exception as e:
+        logger.error(f"Error in profile_handler: {e}")
+        await message.answer(
+            "❌ Произошла ошибка при открытии личного кабинета. Пожалуйста, попробуйте позже.",
+            reply_markup=main_menu_kb()
+        )
 
 @dp.callback_query(lambda c: c.data.startswith('confirm_payment_') or c.data.startswith('reject_payment_'))
 async def process_payment_confirmation(callback_query: types.CallbackQuery):
@@ -3396,141 +3446,136 @@ async def check_tracked_items():
             all_users = subscription_manager.get_all_users()
             
             for user_id, user_data in all_users.items():
-                # Проверяем, активна ли подписка
-                if not subscription_manager.is_subscription_active(user_id):
-                    continue
-                
-                # Получаем список отслеживаемых товаров
-                tracked_items = user_data.get("tracked_items", [])
-                if not tracked_items:
-                    continue
-                
-                # Обновляем информацию о каждом товаре
-                notifications = []
-                
-                for item in tracked_items:
-                    try:
-                        # Получаем данные о товаре
-                        if isinstance(item, dict):
-                            item_id = item.get("id", "")
+                try:
+                    # Проверяем, активна ли подписка
+                    if not subscription_manager.is_subscription_active(int(user_id)):
+                        continue
+                    
+                    # Получаем список отслеживаемых товаров
+                    tracked_items = user_data.get("tracked_items", [])
+                    if not tracked_items:
+                        continue
+                    
+                    # Обновляем информацию о каждом товаре
+                    notifications = []
+                    
+                    for item in tracked_items:
+                        try:
+                            # Получаем данные о товаре
+                            article = item.get("article", "")
+                            if not article:
+                                continue
+                                
                             old_price = item.get("price", 0)
-                            old_stock = item.get("stock", 0)
-                            name = item.get("name", f"Товар {item_id}")
-                        else:
-                            item_id = item
-                            old_price = 0
-                            old_stock = 0
-                            name = f"Товар {item_id}"
-                        
-                        # Пропускаем товары, у которых нет ID
-                        if not item_id:
-                            continue
-                        
-                        # Получаем актуальные данные
-                        product_info = await get_wb_product_info(item_id)
-                        
-                        if not product_info:
-                            continue
-                        
-                        # Получаем новые значения
-                        new_price = product_info["price"]["current"]
-                        new_stock = product_info["stocks"]["total"]
-                        name = product_info["name"]
-                        
-                        # Проверяем изменения
-                        price_change = new_price - old_price if old_price > 0 else 0
-                        stock_change = new_stock - old_stock if old_stock > 0 else 0
-                        
-                        # Формируем уведомления при значительных изменениях
-                        notification = None
-                        
-                        # Изменение цены более чем на 5%
-                        if old_price > 0 and abs(price_change) / old_price > 0.05:
-                            change_type = "увеличилась" if price_change > 0 else "снизилась"
-                            change_icon = "📈" if price_change > 0 else "📉"
+                            old_stock = item.get("sales", 0)
                             
-                            notification = (
-                                f"{change_icon} *Изменение цены товара!*\n\n"
-                                f"*{name}*\n"
-                                f"🔢 Артикул: {item_id}\n"
-                                f"💰 Цена {change_type} с {old_price} ₽ до {new_price} ₽\n"
-                                f"🔄 Изменение: {abs(price_change)} ₽ ({abs(price_change/old_price*100):.1f}%)\n\n"
-                                f"🛒 [Посмотреть на Wildberries](https://www.wildberries.ru/catalog/{item_id}/detail.aspx)"
+                            # Получаем актуальные данные
+                            product_info = await get_wb_product_info(article)
+                            
+                            if not product_info:
+                                continue
+                            
+                            # Получаем новые значения
+                            new_price = product_info["price"]["current"]
+                            new_stock = product_info["stocks"]["total"]
+                            name = product_info["name"]
+                            rating = product_info.get("rating", 0.0)
+                            
+                            # Проверяем изменения
+                            price_change = new_price - old_price if old_price > 0 else 0
+                            stock_change = new_stock - old_stock if old_stock > 0 else 0
+                            
+                            # Формируем уведомления при значительных изменениях
+                            notification = None
+                            
+                            # Изменение цены более чем на 5%
+                            if old_price > 0 and abs(price_change) / old_price > 0.05:
+                                change_type = "увеличилась" if price_change > 0 else "снизилась"
+                                change_icon = "📈" if price_change > 0 else "📉"
+                                
+                                notification = (
+                                    f"{change_icon} *Изменение цены товара!*\n\n"
+                                    f"*{name}*\n"
+                                    f"🔢 Артикул: {article}\n"
+                                    f"💰 Цена {change_type} с {old_price} ₽ до {new_price} ₽\n"
+                                    f"🔄 Изменение: {abs(price_change)} ₽ ({abs(price_change/old_price*100):.1f}%)\n\n"
+                                    f"🛒 [Посмотреть на Wildberries](https://www.wildberries.ru/catalog/{article}/detail.aspx)"
+                                )
+                            
+                            # Значительное изменение наличия (больше 50%)
+                            if old_stock > 0 and (stock_change < 0 or (new_stock > 0 and old_stock == 0)):
+                                if stock_change < 0 and new_stock == 0:
+                                    # Товар закончился
+                                    notification = (
+                                        f"⚠️ *Товар закончился!*\n\n"
+                                        f"*{name}*\n"
+                                        f"🔢 Артикул: {article}\n"
+                                        f"📦 Наличие: 0 шт.\n\n"
+                                        f"🛒 [Посмотреть на Wildberries](https://www.wildberries.ru/catalog/{article}/detail.aspx)"
+                                    )
+                                elif new_stock > 0 and old_stock == 0:
+                                    # Товар появился в наличии
+                                    notification = (
+                                        f"✅ *Товар снова в наличии!*\n\n"
+                                        f"*{name}*\n"
+                                        f"🔢 Артикул: {article}\n"
+                                        f"📦 Наличие: {new_stock} шт.\n"
+                                        f"💰 Цена: {new_price} ₽\n\n"
+                                        f"🛒 [Посмотреть на Wildberries](https://www.wildberries.ru/catalog/{article}/detail.aspx)"
+                                    )
+                                elif stock_change < 0 and abs(stock_change/old_stock) > 0.5:
+                                    # Количество уменьшилось более чем на 50%
+                                    notification = (
+                                        f"📉 *Товар заканчивается!*\n\n"
+                                        f"*{name}*\n"
+                                        f"🔢 Артикул: {article}\n"
+                                        f"📦 Наличие: {new_stock} шт. (-{abs(stock_change)} шт.)\n"
+                                        f"💰 Цена: {new_price} ₽\n\n"
+                                        f"🛒 [Посмотреть на Wildberries](https://www.wildberries.ru/catalog/{article}/detail.aspx)"
+                                    )
+                            
+                            # Если есть уведомление, добавляем его в список
+                            if notification:
+                                notifications.append(notification)
+                            
+                            # Обновляем данные товара в любом случае
+                            new_item = {
+                                "price": new_price,
+                                "stock": new_stock,
+                                "rating": rating,
+                            }
+                            
+                            subscription_manager.update_tracked_item(int(user_id), article, new_item)
+                            
+                        except Exception as item_error:
+                            logger.error(f"Error updating tracked item {article}: {str(item_error)}")
+                            continue
+                    
+                    # Отправляем уведомления пользователю
+                    for notification in notifications:
+                        try:
+                            # Создаем инлайн-клавиатуру для уведомления
+                            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                                [InlineKeyboardButton(text="📋 Посмотреть все товары", callback_data="tracked")]
+                            ])
+                            
+                            await bot.send_message(
+                                chat_id=int(user_id),
+                                text=notification,
+                                parse_mode=ParseMode.MARKDOWN,
+                                reply_markup=keyboard,
+                                disable_web_page_preview=False
                             )
-                        
-                        # Значительное изменение наличия (больше 50%)
-                        if old_stock > 0 and (stock_change < 0 or (new_stock > 0 and old_stock == 0)):
-                            if stock_change < 0 and new_stock == 0:
-                                # Товар закончился
-                                notification = (
-                                    f"⚠️ *Товар закончился!*\n\n"
-                                    f"*{name}*\n"
-                                    f"🔢 Артикул: {item_id}\n"
-                                    f"📦 Наличие: 0 шт.\n\n"
-                                    f"🛒 [Посмотреть на Wildberries](https://www.wildberries.ru/catalog/{item_id}/detail.aspx)"
-                                )
-                            elif new_stock > 0 and old_stock == 0:
-                                # Товар появился в наличии
-                                notification = (
-                                    f"✅ *Товар снова в наличии!*\n\n"
-                                    f"*{name}*\n"
-                                    f"🔢 Артикул: {item_id}\n"
-                                    f"📦 Наличие: {new_stock} шт.\n"
-                                    f"💰 Цена: {new_price} ₽\n\n"
-                                    f"🛒 [Посмотреть на Wildberries](https://www.wildberries.ru/catalog/{item_id}/detail.aspx)"
-                                )
-                            elif stock_change < 0 and abs(stock_change/old_stock) > 0.5:
-                                # Количество уменьшилось более чем на 50%
-                                notification = (
-                                    f"📉 *Товар заканчивается!*\n\n"
-                                    f"*{name}*\n"
-                                    f"🔢 Артикул: {item_id}\n"
-                                    f"📦 Наличие: {new_stock} шт. (-{abs(stock_change)} шт.)\n"
-                                    f"💰 Цена: {new_price} ₽\n\n"
-                                    f"🛒 [Посмотреть на Wildberries](https://www.wildberries.ru/catalog/{item_id}/detail.aspx)"
-                                )
-                        
-                        # Если есть уведомление, добавляем его в список
-                        if notification:
-                            notifications.append(notification)
-                        
-                        # Обновляем данные товара в любом случае
-                        new_item = {
-                            "id": item_id,
-                            "name": name,
-                            "price": new_price,
-                            "stock": new_stock,
-                            "last_update": datetime.now().isoformat()
-                        }
-                        
-                        subscription_manager.update_tracked_item(user_id, item_id, new_item)
-                        
-                    except Exception as item_error:
-                        logger.error(f"Error updating tracked item {item_id}: {str(item_error)}")
-                        continue
-                
-                # Отправляем уведомления пользователю
-                for notification in notifications:
-                    try:
-                        # Создаем инлайн-клавиатуру для уведомления
-                        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                            [InlineKeyboardButton(text="📋 Посмотреть все товары", callback_data="tracked")]
-                        ])
-                        
-                        await bot.send_message(
-                            chat_id=int(user_id),
-                            text=notification,
-                            parse_mode=ParseMode.MARKDOWN,
-                            reply_markup=keyboard,
-                            disable_web_page_preview=False
-                        )
-                        
-                        # Делаем небольшую паузу между отправкой сообщений
-                        await asyncio.sleep(0.5)
-                        
-                    except Exception as notify_error:
-                        logger.error(f"Error sending notification to user {user_id}: {str(notify_error)}")
-                        continue
+                            
+                            # Делаем небольшую паузу между отправкой сообщений
+                            await asyncio.sleep(0.5)
+                            
+                        except Exception as notify_error:
+                            logger.error(f"Error sending notification to user {user_id}: {str(notify_error)}")
+                            continue
+                except Exception as user_error:
+                    logger.error(f"Error processing user {user_id}: {str(user_error)}")
+                    continue
             
             # Проверяем изменения каждые 3 часа
             await asyncio.sleep(3 * 60 * 60)
@@ -3594,16 +3639,23 @@ async def handle_tracking_article(message: types.Message, state: FSMContext):
                 reply_markup=back_keyboard()
             )
             return
+        
+        # Получаем необходимые данные для отслеживания
+        price = product_info['price']['current']
+        sales = product_info['stocks']['total']  # Используем количество в наличии
+        rating = product_info.get('rating', 0.0)  # Берем рейтинг товара или 0, если не указан
             
         # Добавляем товар в отслеживаемые
-        success = subscription_manager.add_tracked_item(user_id, article, product_info['name'], product_info['price']['current'])
+        # Для SQLite версии нужно передать user_id как int, а не строку
+        success = subscription_manager.add_tracked_item(user_id, article, price, sales, rating)
         
         if success:
             await message.answer(
                 f"✅ Товар *{product_info['name']}* успешно добавлен в отслеживаемые!\n\n"
                 f"🔢 Артикул: {article}\n"
-                f"💰 Текущая цена: {product_info['price']['current']} ₽\n"
-                f"📦 Наличие: {product_info['stocks']['total']} шт.\n\n"
+                f"💰 Текущая цена: {price} ₽\n"
+                f"📦 Наличие: {product_info['stocks']['total']} шт.\n"
+                f"⭐ Рейтинг: {rating}\n\n"
                 "Вы будете получать уведомления при изменении цены, наличия или рейтинга товара.",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=main_menu_kb()
@@ -3644,30 +3696,24 @@ async def handle_tracked_items(callback_query: types.CallbackQuery):
         message_text = "📋 *Список отслеживаемых товаров*\n\n"
         
         for i, item in enumerate(tracked_items):
-            # Формируем данные в зависимости от формата
-            if isinstance(item, dict):
-                item_id = item.get("id", "Неизвестно")
-                item_name = item.get("name", "Неизвестный товар")
-                item_price = item.get("price", 0)
-                added_date = item.get("added_date", datetime.now().isoformat())
-                
-                # Переводим дату в читаемый формат
-                try:
-                    date_obj = datetime.fromisoformat(added_date)
-                    formatted_date = date_obj.strftime("%d.%m.%Y")
-                except:
-                    formatted_date = "Неизвестно"
-            else:
-                # Старый формат (просто ID)
-                item_id = item
+            # В SQLite версии item - это словарь с другими ключами
+            item_id = item.get("article", "Неизвестно")
+            item_price = item.get("price", 0)
+            item_sales = item.get("sales", 0)
+            item_rating = item.get("rating", 0)
+            
+            # Для SQLite версии нам нужно дополнительно получить имя товара
+            try:
+                product_info = await get_wb_product_info(item_id)
+                item_name = product_info["name"] if product_info else "Неизвестный товар"
+            except:
                 item_name = "Неизвестный товар"
-                item_price = 0
-                formatted_date = "Неизвестно"
             
             message_text += f"{i+1}. *{item_name}*\n"
             message_text += f"   🔢 Артикул: {item_id}\n"
             message_text += f"   💰 Цена: {item_price} ₽\n"
-            message_text += f"   📅 Добавлен: {formatted_date}\n\n"
+            message_text += f"   📦 Наличие: {item_sales} шт.\n"
+            message_text += f"   ⭐ Рейтинг: {item_rating}\n\n"
         
         # Создаем клавиатуру с кнопками для действий с отслеживаемыми товарами
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -3713,34 +3759,38 @@ async def handle_refresh_tracked(callback_query: types.CallbackQuery, state: FSM
         not_found_items = []
         
         for item in tracked_items:
-            # Получаем ID товара в зависимости от формата
-            if isinstance(item, dict):
-                item_id = item.get("id", "")
-                old_price = item.get("price", 0)
-                old_stock = item.get("stock", 0)
-            else:
-                item_id = item
-                old_price = 0
-                old_stock = 0
+            # Получаем артикул и старые данные в соответствии с SQLite версией
+            article = item.get("article", "")
+            old_price = item.get("price", 0)
+            old_stock = item.get("sales", 0)
+            
+            if not article:
+                continue
             
             # Получаем обновленную информацию
-            product_info = await get_wb_product_info(item_id)
+            product_info = await get_wb_product_info(article)
             
             if product_info:
                 # Обновляем информацию о товаре
+                new_price = product_info["price"]["current"]
+                new_stock = product_info["stocks"]["total"]
+                item_name = product_info["name"]
+                rating = product_info.get("rating", 0.0)
+                
                 new_item = {
-                    "id": item_id,
-                    "name": product_info["name"],
-                    "price": product_info["price"]["current"],
+                    "article": article,
+                    "name": item_name,
+                    "price": new_price,
                     "old_price": old_price,
-                    "stock": product_info["stocks"]["total"],
+                    "stock": new_stock,
                     "old_stock": old_stock,
+                    "rating": rating,
                     "last_update": datetime.now().isoformat()
                 }
                 
                 # Проверяем изменения цены и наличия
-                price_change = new_item["price"] - old_price if old_price > 0 else 0
-                stock_change = new_item["stock"] - old_stock if old_stock > 0 else 0
+                price_change = new_price - old_price if old_price > 0 else 0
+                stock_change = new_stock - old_stock if old_stock > 0 else 0
                 
                 new_item["price_change"] = price_change
                 new_item["stock_change"] = stock_change
@@ -3748,9 +3798,9 @@ async def handle_refresh_tracked(callback_query: types.CallbackQuery, state: FSM
                 updated_items.append(new_item)
                 
                 # Обновляем товар в базе данных
-                subscription_manager.update_tracked_item(user_id, item_id, new_item)
+                subscription_manager.update_tracked_item(user_id, article, new_item)
             else:
-                not_found_items.append(item_id)
+                not_found_items.append(article)
         
         # Формируем сообщение с результатами обновления
         message_text = "✅ *Обновление завершено*\n\n"
@@ -3760,7 +3810,7 @@ async def handle_refresh_tracked(callback_query: types.CallbackQuery, state: FSM
             
             for item in updated_items:
                 message_text += f"*{item['name']}*\n"
-                message_text += f"🔢 Артикул: {item['id']}\n"
+                message_text += f"🔢 Артикул: {item['article']}\n"
                 message_text += f"💰 Цена: {item['price']} ₽"
                 
                 if item.get("price_change", 0) != 0:
@@ -3821,18 +3871,21 @@ async def handle_delete_tracked_start(callback_query: types.CallbackQuery, state
         keyboard = []
         
         for i, item in enumerate(tracked_items):
-            if isinstance(item, dict):
-                item_id = item.get("id", "")
-                item_name = item.get("name", "Неизвестный товар")
-            else:
-                item_id = item
-                item_name = f"Товар {item_id}"
+            # В SQLite версии item - это словарь с другими ключами
+            article = item.get("article", "")
             
-            # Добавляем кнопку для каждого товара
+            # Для SQLite версии нам нужно дополнительно получить имя товара
+            try:
+                product_info = await get_wb_product_info(article)
+                item_name = product_info["name"] if product_info else f"Товар {article}"
+            except:
+                item_name = f"Товар {article}"
+            
+            # Добавляем кнопку для каждого товара, теперь callback_data содержит артикул вместо id
             keyboard.append([
                 InlineKeyboardButton(
-                    text=f"{i+1}. {item_name[:30]}... (ID: {item_id})",
-                    callback_data=f"delete_item_{item_id}"
+                    text=f"{i+1}. {item_name[:30]}... (ID: {article})",
+                    callback_data=f"delete_item_{article}"
                 )
             ])
         
@@ -3857,13 +3910,13 @@ async def handle_delete_tracked_start(callback_query: types.CallbackQuery, state
 async def handle_delete_tracked_item(callback_query: types.CallbackQuery, state: FSMContext):
     try:
         user_id = callback_query.from_user.id
-        item_id = callback_query.data.split("_")[2]
+        article = callback_query.data.split("_")[2]  # Теперь это артикул, а не id
         
         # Удаляем товар из отслеживаемых
-        success = subscription_manager.remove_tracked_item(user_id, item_id)
+        success = subscription_manager.remove_tracked_item(user_id, article)
         
         if success:
-            await callback_query.answer(f"Товар {item_id} удален из отслеживаемых", show_alert=True)
+            await callback_query.answer(f"Товар {article} удален из отслеживаемых", show_alert=True)
         else:
             await callback_query.answer("Не удалось удалить товар", show_alert=True)
         
