@@ -16173,3 +16173,44 @@ AttributeError: 'list' object has no attribute 'get'
 2025-04-26 02:59:12,292 - aiogram.dispatcher - WARNING - Received SIGINT signal
 2025-04-26 02:59:12,293 - aiogram.dispatcher - INFO - Polling stopped for bot @edinstvo_ostrovov_bot id=6458024697 - 'Единство островов'
 2025-04-26 02:59:12,294 - aiogram.dispatcher - INFO - Polling stopped
+2025-05-17 15:33:34,099 - subscription_manager - INFO - Initializing SubscriptionManager with database: subscriptions.db
+2025-05-17 15:33:34,100 - subscription_manager - INFO - Initializing database tables
+2025-05-17 15:33:34,112 - subscription_manager - INFO - Database tables initialized successfully
+2025-05-17 15:33:34,144 - __main__ - INFO - Starting bot...
+2025-05-17 15:33:34,144 - aiogram.dispatcher - INFO - Start polling
+2025-05-17 15:33:34,145 - __main__ - INFO - Starting expiring subscriptions check
+2025-05-17 15:33:34,145 - subscription_manager - INFO - Getting expiring subscriptions
+2025-05-17 15:33:34,146 - subscription_manager - INFO - Found 1 expiring subscriptions
+2025-05-17 15:33:34,146 - __main__ - INFO - Found 1 expiring subscriptions
+2025-05-17 15:33:34,146 - __main__ - INFO - Sending expiry notification to user 1659228199, -1 days left
+2025-05-17 15:33:35,596 - aiogram.dispatcher - INFO - Run polling for bot @EYA_ANALIS_BOT id=7790448077 - 'EYA'
+2025-05-17 15:33:35,774 - aiogram.dispatcher - ERROR - Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: can't use getUpdates method while webhook is active; use deleteWebhook to delete the webhook first
+2025-05-17 15:33:35,774 - aiogram.dispatcher - WARNING - Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 7790448077)
+2025-05-17 15:33:40,181 - aiogram.dispatcher - ERROR - Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: can't use getUpdates method while webhook is active; use deleteWebhook to delete the webhook first
+2025-05-17 15:33:40,182 - aiogram.dispatcher - WARNING - Sleep for 1.242920 seconds and try again... (tryings = 1, bot id = 7790448077)
+2025-05-17 15:33:41,596 - aiogram.dispatcher - ERROR - Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: can't use getUpdates method while webhook is active; use deleteWebhook to delete the webhook first
+2025-05-17 15:33:41,596 - aiogram.dispatcher - WARNING - Sleep for 1.579048 seconds and try again... (tryings = 2, bot id = 7790448077)
+2025-05-17 15:33:46,453 - aiogram.dispatcher - ERROR - Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: can't use getUpdates method while webhook is active; use deleteWebhook to delete the webhook first
+2025-05-17 15:33:46,453 - aiogram.dispatcher - WARNING - Sleep for 1.986380 seconds and try again... (tryings = 3, bot id = 7790448077)
+2025-05-17 15:33:48,586 - aiogram.dispatcher - ERROR - Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: can't use getUpdates method while webhook is active; use deleteWebhook to delete the webhook first
+2025-05-17 15:33:48,587 - aiogram.dispatcher - WARNING - Sleep for 2.370398 seconds and try again... (tryings = 4, bot id = 7790448077)
+2025-05-17 15:33:54,131 - aiogram.dispatcher - ERROR - Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: can't use getUpdates method while webhook is active; use deleteWebhook to delete the webhook first
+2025-05-17 15:33:54,131 - aiogram.dispatcher - WARNING - Sleep for 3.148987 seconds and try again... (tryings = 5, bot id = 7790448077)
+2025-05-17 15:33:58,287 - aiogram.dispatcher - ERROR - Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: can't use getUpdates method while webhook is active; use deleteWebhook to delete the webhook first
+2025-05-17 15:33:58,287 - aiogram.dispatcher - WARNING - Sleep for 4.153804 seconds and try again... (tryings = 6, bot id = 7790448077)
+2025-05-17 15:33:59,352 - aiogram.dispatcher - WARNING - Received SIGINT signal
+2025-05-17 15:33:59,352 - aiogram.dispatcher - INFO - Polling stopped for bot @EYA_ANALIS_BOT id=7790448077 - 'EYA'
+2025-05-17 15:33:59,353 - aiogram.dispatcher - INFO - Polling stopped
+2025-05-17 15:35:30,536 - subscription_manager - INFO - Initializing SubscriptionManager with database: subscriptions.db
+2025-05-17 15:35:30,536 - subscription_manager - INFO - Initializing database tables
+2025-05-17 15:35:30,539 - subscription_manager - INFO - Database tables initialized successfully
+2025-05-17 15:35:30,541 - __main__ - INFO - Starting bot...
+2025-05-17 15:35:30,541 - aiogram.dispatcher - INFO - Start polling
+2025-05-17 15:35:30,541 - __main__ - INFO - Starting expiring subscriptions check
+2025-05-17 15:35:30,541 - subscription_manager - INFO - Getting expiring subscriptions
+2025-05-17 15:35:30,542 - subscription_manager - INFO - Found 1 expiring subscriptions
+2025-05-17 15:35:30,542 - __main__ - INFO - Found 1 expiring subscriptions
+2025-05-17 15:35:30,542 - __main__ - INFO - Sending expiry notification to user 1659228199, -1 days left
+2025-05-17 15:35:31,761 - aiogram.dispatcher - INFO - Run polling for bot @EYA_ANALIS_BOT id=7790448077 - 'EYA'
+2025-05-17 15:35:33,689 - __main__ - INFO - New user started: 1659228199 (@WSAMURAIII)
+2025-05-17 15:35:34,064 - aiogram.event - INFO - Update id=440879512 is handled. Duration 374 ms by bot id=7790448077
