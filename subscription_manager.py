@@ -1,323 +1,544 @@
-import json
-import os
-import logging
+import sqlite3
 from datetime import datetime, timedelta
+from typing import List, Dict, Optional
+import logging
 
 logger = logging.getLogger(__name__)
 
 class SubscriptionManager:
-    def __init__(self):
-        self.db_file = "subscriptions.json"
-        self._load_data()
+    def __init__(self, db_path: str = "subscriptions.db"):
+        self.db_path = db_path
+        logger.info(f"Initializing SubscriptionManager with database: {db_path}")
+        self._init_db()
+        self.subscriptions = {}  # user_id -> subscription_type
+        self.balances = {}  # user_id -> balance
+        self.subscription_expiry = {}  # user_id -> expiry_date
+        self.action_counts = {}  # user_id -> {action_type: count}
     
-    def _load_data(self):
-        """Загружает данные из JSON файла."""
-        if os.path.exists(self.db_file):
-            try:
-                with open(self.db_file, 'r', encoding='utf-8') as f:
-                    self.data = json.load(f)
-            except Exception as e:
-                logger.error(f"Ошибка загрузки данных: {str(e)}")
-                self.data = {"users": {}}
-        else:
-            self.data = {"users": {}}
+    def _init_db(self):
+        """Инициализация базы данных"""
+        logger.info("Initializing database tables")
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Таблица пользователей
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            balance REAL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
+        
+        # Создаем таблицу подписок
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            subscription_type TEXT,
+            start_date TIMESTAMP,
+            end_date TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (user_id)
+        )
+        ''')
+        
+        # Создаем таблицу транзакций
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            amount REAL,
+            type TEXT,
+            description TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (user_id)
+        )
+        ''')
+        
+        # Создаем таблицу лимитов
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS limits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            action_type TEXT,
+            count INTEGER DEFAULT 0,
+            last_reset TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (user_id)
+        )
+        ''')
+        
+        # Проверяем наличие колонки subscription_type
+        cursor.execute("PRAGMA table_info(users)")
+        columns = [column[1] for column in cursor.fetchall()]
+        if 'subscription_type' not in columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN subscription_type TEXT DEFAULT 'free'")
+        
+        # Проверяем наличие колонки subscription_end
+        cursor.execute("PRAGMA table_info(users)")
+        columns = [column[1] for column in cursor.fetchall()]
+        if 'subscription_end' not in columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN subscription_end DATE")
+        
+        # Таблица отслеживаемых товаров
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS tracked_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            article TEXT,
+            last_price REAL,
+            last_sales INTEGER,
+            last_rating REAL,
+            notify_price_change BOOLEAN DEFAULT 1,
+            notify_sales_change BOOLEAN DEFAULT 1,
+            notify_rating_change BOOLEAN DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (user_id)
+        )
+        ''')
+        
+        # Таблица действий пользователя
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            action_type TEXT,
+            count INTEGER DEFAULT 0,
+            reset_date DATE,
+            FOREIGN KEY (user_id) REFERENCES users (user_id)
+        )
+        ''')
+        
+        conn.commit()
+        conn.close()
+        logger.info("Database tables initialized successfully")
     
-    def _save_data(self):
-        """Сохраняет данные в JSON файл."""
-        try:
-            with open(self.db_file, 'w', encoding='utf-8') as f:
-                json.dump(self.data, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            logger.error(f"Ошибка сохранения данных: {str(e)}")
+    def add_user(self, user_id: int) -> None:
+        """Добавление нового пользователя"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            "INSERT OR IGNORE INTO users (user_id) VALUES (?)",
+            (user_id,)
+        )
+        
+        conn.commit()
+        conn.close()
     
-    def add_user(self, user_id):
-        """Добавляет нового пользователя."""
-        user_id = str(user_id)
-        if user_id not in self.data["users"]:
-            self.data["users"][user_id] = {
-                "balance": 0,
-                "subscription": None,
-                "subscription_until": None,
-                "tracked_items": [],
-                "actions": {
-                    "product_analysis": {"used": 0, "limit": 0},
-                    "niche_analysis": {"used": 0, "limit": 0},
-                    "tracking_items": {"used": 0, "limit": 0},
-                    "global_search": {"used": 0, "limit": 0}
-                }
+    def get_user_balance(self, user_id: int) -> float:
+        logger.info(f"Getting balance for user {user_id}")
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            "SELECT balance FROM users WHERE user_id = ?",
+            (user_id,)
+        )
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        balance = result[0] if result else 0.0
+        logger.info(f"User {user_id} balance: {balance}₽")
+        return balance
+    
+    def update_balance(self, user_id: int, amount: float):
+        logger.info(f"Updating balance for user {user_id}: {amount}₽")
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+            (amount, user_id)
+        )
+        
+        conn.commit()
+        conn.close()
+        logger.info(f"Balance updated successfully for user {user_id}")
+    
+    def add_tracked_item(self, user_id: int, article: str,
+                        price: float, sales: int, rating: float) -> None:
+        """Добавление товара для отслеживания"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+        INSERT INTO tracked_items 
+        (user_id, article, last_price, last_sales, last_rating)
+        VALUES (?, ?, ?, ?, ?)
+        ''', (user_id, article, price, sales, rating))
+        
+        conn.commit()
+        conn.close()
+    
+    def remove_tracked_item(self, user_id: int, article: str) -> None:
+        """Удаление отслеживаемого товара"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+        DELETE FROM tracked_items 
+        WHERE user_id = ? AND article = ?
+        ''', (user_id, article))
+        
+        conn.commit()
+        conn.close()
+    
+    def get_tracked_items(self, user_id: int) -> List[Dict]:
+        """Получение списка отслеживаемых товаров"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+        SELECT article, last_price, last_sales, last_rating,
+               notify_price_change, notify_sales_change, notify_rating_change
+        FROM tracked_items 
+        WHERE user_id = ?
+        ''', (user_id,))
+        
+        items = []
+        for row in cursor.fetchall():
+            items.append({
+                'article': row[0],
+                'price': row[1],
+                'sales': row[2],
+                'rating': row[3],
+                'notify_price': bool(row[4]),
+                'notify_sales': bool(row[5]),
+                'notify_rating': bool(row[6])
+            })
+        
+        conn.close()
+        return items
+    
+    def update_item_stats(self, article: str, 
+                         new_price: float, 
+                         new_sales: int, 
+                         new_rating: float) -> List[Dict]:
+        """
+        Обновление статистики товара и получение уведомлений
+        Возвращает список уведомлений для пользователей
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Получаем текущие данные
+        cursor.execute('''
+        SELECT user_id, last_price, last_sales, last_rating,
+               notify_price_change, notify_sales_change, notify_rating_change
+        FROM tracked_items 
+        WHERE article = ?
+        ''', (article,))
+        
+        notifications = []
+        for row in cursor.fetchall():
+            user_id = row[0]
+            old_price = row[1]
+            old_sales = row[2]
+            old_rating = row[3]
+            notify_price = bool(row[4])
+            notify_sales = bool(row[5])
+            notify_rating = bool(row[6])
+            
+            # Проверяем изменения
+            price_change = abs((new_price - old_price) / old_price) if old_price else 0
+            sales_change = abs((new_sales - old_sales) / old_sales) if old_sales else 0
+            rating_change = abs(new_rating - old_rating) if old_rating else 0
+            
+            notification = {
+                'user_id': user_id,
+                'article': article,
+                'changes': []
             }
-            self._save_data()
-            logger.info(f"Добавлен новый пользователь: {user_id}")
-    
-    def get_user_balance(self, user_id):
-        """Возвращает баланс пользователя."""
-        user_id = str(user_id)
-        if user_id not in self.data["users"]:
-            self.add_user(user_id)
-        return self.data["users"][user_id].get("balance", 0)
-    
-    def update_balance(self, user_id, amount):
-        """Обновляет баланс пользователя."""
-        user_id = str(user_id)
-        if user_id not in self.data["users"]:
-            self.add_user(user_id)
-        
-        current_balance = self.data["users"][user_id].get("balance", 0)
-        self.data["users"][user_id]["balance"] = current_balance + amount
-        self._save_data()
-        logger.info(f"Обновлен баланс пользователя {user_id}: {current_balance} -> {current_balance + amount}")
-        return self.data["users"][user_id]["balance"]
-    
-    def get_tracked_items(self, user_id):
-        """Возвращает список отслеживаемых товаров."""
-        user_id = str(user_id)
-        if user_id not in self.data["users"]:
-            self.add_user(user_id)
-        tracked_items = self.data["users"][user_id].get("tracked_items", [])
-        
-        # Преобразуем старый формат (просто список ID) в новый формат (список словарей)
-        result = []
-        for item in tracked_items:
-            if isinstance(item, str):
-                # Старый формат, преобразуем в новый
-                result.append({
-                    "id": item,
-                    "name": "Неизвестный товар",
-                    "price": 0,
-                    "added_date": datetime.now().isoformat(),
-                    "last_update": datetime.now().isoformat()
+            
+            # Добавляем уведомления при изменении более чем на 20%
+            if notify_price and price_change > 0.2:
+                notification['changes'].append({
+                    'type': 'price',
+                    'old': old_price,
+                    'new': new_price,
+                    'change': price_change
                 })
-            else:
-                # Новый формат, используем как есть
-                result.append(item)
+            
+            if notify_sales and sales_change > 0.2:
+                notification['changes'].append({
+                    'type': 'sales',
+                    'old': old_sales,
+                    'new': new_sales,
+                    'change': sales_change
+                })
+            
+            if notify_rating and rating_change > 0.5:
+                notification['changes'].append({
+                    'type': 'rating',
+                    'old': old_rating,
+                    'new': new_rating,
+                    'change': rating_change
+                })
+            
+            if notification['changes']:
+                notifications.append(notification)
         
-        return result
+        # Обновляем данные
+        cursor.execute('''
+        UPDATE tracked_items 
+        SET last_price = ?, last_sales = ?, last_rating = ?
+        WHERE article = ?
+        ''', (new_price, new_sales, new_rating, article))
+        
+        conn.commit()
+        conn.close()
+        
+        return notifications 
     
-    def add_tracked_item(self, user_id, item_id, item_name="", item_price=0):
-        """Добавляет товар в список отслеживаемых."""
-        user_id = str(user_id)
-        if user_id not in self.data["users"]:
-            self.add_user(user_id)
+    def get_subscription(self, user_id: int) -> str:
+        """Получение типа подписки пользователя"""
+        logger.info(f"Getting subscription for user {user_id}")
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
         
-        # Проверяем лимит отслеживаемых товаров
-        subscription = self.get_subscription(user_id)
-        if not subscription or not self.is_subscription_active(user_id):
+        cursor.execute(
+            "SELECT subscription_type FROM users WHERE user_id = ?",
+            (user_id,)
+        )
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        subscription = result[0] if result else 'free'
+        logger.info(f"User {user_id} subscription: {subscription}")
+        return subscription
+    
+    def update_subscription(self, user_id: int, subscription_type: str, duration_days: int = 30):
+        """Обновление подписки пользователя"""
+        logger.info(f"Updating subscription for user {user_id} to {subscription_type}")
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        expiry_date = (datetime.now() + timedelta(days=duration_days)).strftime('%Y-%m-%d')
+        
+        cursor.execute(
+            "UPDATE users SET subscription_type = ?, subscription_end = ? WHERE user_id = ?",
+            (subscription_type, expiry_date, user_id)
+        )
+        
+        conn.commit()
+        conn.close()
+        logger.info(f"Subscription updated successfully for user {user_id}")
+    
+    def is_subscription_active(self, user_id: int) -> bool:
+        logger.info(f"Checking if subscription is active for user {user_id}")
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            "SELECT subscription_end FROM users WHERE user_id = ?",
+            (user_id,)
+        )
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        if not result or not result[0]:
+            logger.info(f"User {user_id} has no active subscription")
             return False
         
-        tracked_items = self.data["users"][user_id].get("tracked_items", [])
-        
-        # Проверяем, не превышен ли лимит отслеживаемых товаров
-        action_stats = self.data["users"][user_id].get("actions", {}).get("tracking_items", {})
-        limit = action_stats.get("limit", 0)
-        
-        if limit != float('inf') and len(tracked_items) >= limit:
-            return False
-        
-        # Проверяем, не добавлен ли уже этот товар
-        for item in tracked_items:
-            if isinstance(item, dict) and item.get("id") == item_id:
-                return True
-            elif item == item_id:
-                return True
-        
-        # Создаем новый элемент
-        new_item = {
-            "id": item_id,
-            "name": item_name,
-            "price": item_price,
-            "stock": 0,
-            "added_date": datetime.now().isoformat(),
-            "last_update": datetime.now().isoformat()
-        }
-        
-        # Добавляем товар в список отслеживаемых
-        if "tracked_items" not in self.data["users"][user_id]:
-            self.data["users"][user_id]["tracked_items"] = []
-        
-        self.data["users"][user_id]["tracked_items"].append(new_item)
-        self._save_data()
-        
-        logger.info(f"Добавлен отслеживаемый товар {item_id} ({item_name}) для пользователя {user_id}")
-        return True
+        is_active = datetime.now() < datetime.fromisoformat(result[0])
+        logger.info(f"User {user_id} subscription active: {is_active}")
+        return is_active
     
-    def remove_tracked_item(self, user_id, item_id):
-        """Удаляет товар из списка отслеживаемых."""
-        user_id = str(user_id)
-        if user_id not in self.data["users"]:
-            return False
-        
-        tracked_items = self.data["users"][user_id].get("tracked_items", [])
-        
-        # Ищем товар в списке с учетом возможных разных форматов
-        for i, item in enumerate(tracked_items):
-            if isinstance(item, dict) and item.get("id") == item_id:
-                # Новый формат (словарь)
-                del tracked_items[i]
-                self._save_data()
-                logger.info(f"Удален отслеживаемый товар {item_id} для пользователя {user_id}")
-                return True
-            elif item == item_id:
-                # Старый формат (просто ID)
-                del tracked_items[i]
-                self._save_data()
-                logger.info(f"Удален отслеживаемый товар {item_id} для пользователя {user_id}")
-                return True
-        
-        return False
-    
-    def get_subscription(self, user_id):
-        """Возвращает тип подписки пользователя."""
-        user_id = str(user_id)
-        if user_id not in self.data["users"]:
-            self.add_user(user_id)
-        return self.data["users"][user_id].get("subscription")
-    
-    def update_subscription(self, user_id, subscription_type):
-        """Обновляет подписку пользователя."""
-        user_id = str(user_id)
-        if user_id not in self.data["users"]:
-            self.add_user(user_id)
-        
-        # Устанавливаем тип подписки
-        self.data["users"][user_id]["subscription"] = subscription_type
-        
-        # Устанавливаем срок действия подписки (30 дней)
-        expiry_date = (datetime.now() + timedelta(days=30)).isoformat()
-        self.data["users"][user_id]["subscription_until"] = expiry_date
-        
-        # Обновляем лимиты действий
-        from new_bot import SUBSCRIPTION_LIMITS
-        limits = SUBSCRIPTION_LIMITS.get(subscription_type, {})
-        for action, limit in limits.items():
-            if action in self.data["users"][user_id]["actions"]:
-                self.data["users"][user_id]["actions"][action]["limit"] = limit
-                # Сбрасываем счетчик использованных действий
-                self.data["users"][user_id]["actions"][action]["used"] = 0
-        
-        self._save_data()
-        logger.info(f"Обновлена подписка пользователя {user_id} на {subscription_type} до {expiry_date}")
-        return True
-    
-    def is_subscription_active(self, user_id):
-        """Проверяет, активна ли подписка."""
-        user_id = str(user_id)
-        if user_id not in self.data["users"]:
-            return False
-        
-        subscription_until = self.data["users"][user_id].get("subscription_until")
-        if not subscription_until:
-            return False
-        
-        try:
-            expiry_date = datetime.fromisoformat(subscription_until)
-            return expiry_date > datetime.now()
-        except (ValueError, TypeError):
-            return False
-    
-    def get_subscription_stats(self, user_id):
-        """Возвращает статистику подписки."""
-        user_id = str(user_id)
-        if user_id not in self.data["users"]:
-            return None
-        
-        subscription = self.data["users"][user_id].get("subscription")
-        if not subscription:
-            return None
-        
-        subscription_until = self.data["users"][user_id].get("subscription_until")
-        if not subscription_until:
-            return None
-        
-        actions = self.data["users"][user_id].get("actions", {})
-        
-        return {
-            "type": subscription,
-            "expiry_date": subscription_until,
-            "actions": actions
-        }
-    
-    def can_perform_action(self, user_id, action_type):
-        """Проверяет, может ли пользователь выполнить действие."""
-        user_id = str(user_id)
-        
-        # Проверяем, активна ли подписка
+    def get_subscription_limits(self, user_id: int) -> dict:
+        logger.info(f"Getting subscription limits for user {user_id}")
+        subscription_type = self.get_subscription(user_id)
         if not self.is_subscription_active(user_id):
-            return False
+            logger.info(f"User {user_id} has no active subscription, returning zero limits")
+            return {
+                'product_analysis': 0,
+                'niche_analysis': 0,
+                'tracking_items': 0
+            }
         
-        # Проверяем лимиты действий
-        actions = self.data["users"][user_id].get("actions", {})
-        if action_type not in actions:
-            return False
-        
-        action = actions[action_type]
-        used = action.get("used", 0)
-        limit = action.get("limit", 0)
-        
-        # Если лимит бесконечный (float('inf')), то всегда возвращаем True
-        if limit == float('inf'):
+        limits = {
+            'basic': {
+                'product_analysis': 50,
+                'niche_analysis': 20,
+                'tracking_items': 10
+            },
+            'pro': {
+                'product_analysis': float('inf'),
+                'niche_analysis': float('inf'),
+                'tracking_items': 50
+            },
+            'business': {
+                'product_analysis': float('inf'),
+                'niche_analysis': float('inf'),
+                'tracking_items': 200
+            }
+        }
+        user_limits = limits.get(subscription_type, limits['basic'])
+        logger.info(f"User {user_id} limits: {user_limits}")
+        return user_limits
+    
+    def can_perform_action(self, user_id: int, action_type: str) -> bool:
+        logger.info(f"Checking if user {user_id} can perform action: {action_type}")
+        limits = self.get_subscription_limits(user_id)
+        if limits[action_type] == float('inf'):
+            logger.info(f"User {user_id} has unlimited {action_type} actions")
             return True
         
-        # Проверяем, не превышен ли лимит
-        if used >= limit:
-            return False
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
         
-        # Увеличиваем счетчик использованных действий
-        self.data["users"][user_id]["actions"][action_type]["used"] = used + 1
-        self._save_data()
+        cursor.execute('''
+        SELECT count FROM user_actions 
+        WHERE user_id = ? AND action_type = ?
+        ''', (user_id, action_type))
         
-        return True
+        result = cursor.fetchone()
+        conn.close()
+        
+        if not result:
+            logger.info(f"User {user_id} has no {action_type} actions recorded")
+            return True
+        
+        can_perform = result[0] < limits[action_type]
+        logger.info(f"User {user_id} can perform {action_type}: {can_perform}")
+        return can_perform
     
-    def get_expiring_subscriptions(self):
-        """Возвращает список подписок, которые скоро истекут."""
-        expiring_subs = []
+    def decrement_action_count(self, user_id: int, action_type: str):
+        logger.info(f"Decrementing action count for user {user_id}, action: {action_type}")
+        limits = self.get_subscription_limits(user_id)
+        if limits[action_type] == float('inf'):
+            logger.info(f"User {user_id} has unlimited {action_type} actions, skipping count")
+            return
         
-        for user_id, user_data in self.data["users"].items():
-            subscription = user_data.get("subscription")
-            subscription_until = user_data.get("subscription_until")
-            
-            if not subscription or not subscription_until:
-                continue
-            
-            try:
-                expiry_date = datetime.fromisoformat(subscription_until)
-                days_left = (expiry_date - datetime.now()).days
-                
-                if 0 < days_left <= 3:  # Подписка истекает в течение 3 дней
-                    expiring_subs.append({
-                        "user_id": int(user_id),
-                        "type": subscription,
-                        "expiry_date": subscription_until
-                    })
-            except (ValueError, TypeError):
-                continue
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
         
-        return expiring_subs
+        # Получаем текущий счетчик
+        cursor.execute('''
+        SELECT count FROM user_actions 
+        WHERE user_id = ? AND action_type = ?
+        ''', (user_id, action_type))
+        
+        result = cursor.fetchone()
+        
+        if not result:
+            # Создаем новую запись
+            cursor.execute('''
+            INSERT INTO user_actions (user_id, action_type, count)
+            VALUES (?, ?, 1)
+            ''', (user_id, action_type))
+            logger.info(f"Created new action count record for user {user_id}, action: {action_type}")
+        else:
+            # Обновляем существующую запись
+            cursor.execute('''
+            UPDATE user_actions 
+            SET count = count + 1
+            WHERE user_id = ? AND action_type = ?
+            ''', (user_id, action_type))
+            logger.info(f"Updated action count for user {user_id}, action: {action_type}")
+        
+        conn.commit()
+        conn.close()
     
-    def update_tracked_item(self, user_id, item_id, new_data):
-        """Обновляет информацию о товаре в списке отслеживаемых."""
-        user_id = str(user_id)
-        if user_id not in self.data["users"]:
-            return False
+    def get_subscription_end_date(self, user_id: int) -> str:
+        """Получение даты окончания подписки пользователя"""
+        logger.info(f"Getting subscription end date for user {user_id}")
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
         
-        tracked_items = self.data["users"][user_id].get("tracked_items", [])
+        cursor.execute(
+            "SELECT subscription_end FROM users WHERE user_id = ?",
+            (user_id,)
+        )
         
-        # Ищем товар в списке
-        for i, item in enumerate(tracked_items):
-            if isinstance(item, dict) and item.get("id") == item_id:
-                # Обновляем данные товара
-                self.data["users"][user_id]["tracked_items"][i] = new_data
-                self._save_data()
-                logger.info(f"Обновлен отслеживаемый товар {item_id} для пользователя {user_id}")
-                return True
-            elif item == item_id:
-                # Заменяем старый формат (просто ID) на новый формат (словарь)
-                self.data["users"][user_id]["tracked_items"][i] = new_data
-                self._save_data()
-                logger.info(f"Обновлен отслеживаемый товар {item_id} для пользователя {user_id}")
-                return True
+        result = cursor.fetchone()
+        conn.close()
         
-        return False
+        if not result or not result[0]:
+            logger.info(f"User {user_id} has no subscription end date")
+            return "Не установлена"
+        
+        end_date = datetime.fromisoformat(result[0]).strftime("%d.%m.%Y")
+        logger.info(f"User {user_id} subscription ends on: {end_date}")
+        return end_date
     
-    def get_all_users(self):
-        """Возвращает словарь со всеми пользователями и их данными."""
-        return self.data.get("users", {}) 
+    def get_subscription_stats(self, user_id: int) -> dict:
+        """Получение статистики использования подписки"""
+        logger.info(f"Getting subscription stats for user {user_id}")
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Получаем информацию о подписке
+        cursor.execute('''
+        SELECT subscription_type, subscription_end 
+        FROM users WHERE user_id = ?
+        ''', (user_id,))
+        
+        sub_info = cursor.fetchone()
+        if not sub_info:
+            logger.info(f"No subscription info found for user {user_id}")
+            return {}
+        
+        # Получаем статистику действий
+        cursor.execute('''
+        SELECT action_type, count 
+        FROM user_actions 
+        WHERE user_id = ?
+        ''', (user_id,))
+        
+        actions = cursor.fetchall()
+        conn.close()
+        
+        limits = self.get_subscription_limits(user_id)
+        stats = {
+            'subscription_type': sub_info[0] if sub_info[0] else 'free',
+            'expiry_date': sub_info[1].replace(' ', 'T') if sub_info[1] else None,
+            'actions': {}
+        }
+        
+        # Initialize all possible actions with zero usage
+        for action_type in limits.keys():
+            stats['actions'][action_type] = {
+                'used': 0,
+                'limit': limits[action_type]
+            }
+        
+        # Update with actual usage
+        for action_type, count in actions:
+            if action_type in stats['actions']:
+                stats['actions'][action_type]['used'] = count
+        
+        logger.info(f"Retrieved subscription stats for user {user_id}: {stats}")
+        return stats
+    
+    def get_expiring_subscriptions(self) -> list:
+        """Получение списка подписок, срок действия которых истекает в течение 3 дней"""
+        logger.info("Getting expiring subscriptions")
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        three_days_later = datetime.now() + timedelta(days=3)
+        
+        cursor.execute('''
+        SELECT user_id, subscription_type, subscription_end 
+        FROM users 
+        WHERE subscription_end <= ? AND subscription_type != 'free'
+        ''', (three_days_later,))
+        
+        expiring = cursor.fetchall()
+        conn.close()
+        
+        result = [
+            {
+                'user_id': row[0],
+                'type': row[1],
+                'expiry_date': row[2]
+            }
+            for row in expiring
+        ]
+        
+        logger.info(f"Found {len(result)} expiring subscriptions")
+        return result 
