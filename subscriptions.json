@@ -1,0 +1,40 @@
+{
+  "users": {
+    "1659228199": {
+      "balance": 995000.0,
+      "subscription": "business",
+      "subscription_until": "2025-06-17T13:02:32.795978",
+      "tracked_items": [
+        {
+          "id": "176409037",
+          "name": "Толстовка детская шуба чебурашка тедди",
+          "price": 3712.0,
+          "old_price": 3712.0,
+          "stock": 3,
+          "old_stock": 3,
+          "last_update": "2025-05-18T14:15:27.306862",
+          "price_change": 0.0,
+          "stock_change": 0
+        }
+      ],
+      "actions": {
+        "product_analysis": {
+          "used": 0,
+          "limit": Infinity
+        },
+        "niche_analysis": {
+          "used": 0,
+          "limit": Infinity
+        },
+        "tracking_items": {
+          "used": 4,
+          "limit": 200
+        },
+        "global_search": {
+          "used": 0,
+          "limit": Infinity
+        }
+      }
+    }
+  }
+}
