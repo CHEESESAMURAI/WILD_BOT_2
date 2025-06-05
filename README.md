@@ -1,6 +1,40 @@
-# Wildberries Analysis Bot
+# WILD_BOT_4
 
-Telegram бот для анализа товаров и ниш на Wildberries.
+Telegram-бот для анализа товаров и ниш на Wildberries.
+
+## Основные функции
+
+- Анализ товаров по артикулу
+- Анализ ниш на маркетплейсе
+- Отслеживание товаров
+- Глобальный поиск
+- Управление подписками
+
+## Установка
+
+```bash
+# Клонировать репозиторий
+git clone https://github.com/CHEESESAMURAI/WILD_BOT_4.git
+
+# Перейти в директорию проекта
+cd WILD_BOT_4
+
+# Установить зависимости
+pip install -r requirements.txt
+
+# Запустить бота
+python new_bot.py
+```
+
+## Конфигурация
+
+Перед запуском необходимо настроить токен бота в конфигурационном файле.
+
+## Технологии
+- Python 3.9+
+- aiogram
+- SQLite
+- Selenium WebDriver
 
 ## Возможности
 
@@ -9,34 +43,6 @@ Telegram бот для анализа товаров и ниш на Wildberries.
 - Отслеживание товаров
 - Глобальный поиск товаров
 - Система подписок и баланса
-
-## Установка
-
-1. Клонируйте репозиторий:
-```bash
-git clone https://github.com/your-username/wild-bot.git
-cd wild-bot
-```
-
-2. Создайте виртуальное окружение и установите зависимости:
-```bash
-python -m venv venv
-source venv/bin/activate  # для Linux/Mac
-# или
-venv\Scripts\activate  # для Windows
-pip install -r requirements.txt
-```
-
-3. Создайте файл .env и добавьте необходимые переменные окружения:
-```
-BOT_TOKEN=your_telegram_bot_token
-SERPER_API_KEY=your_serper_api_key
-```
-
-4. Запустите бота:
-```bash
-python new_bot.py
-```
 
 ## Структура проекта
 
