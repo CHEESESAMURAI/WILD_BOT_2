@@ -1,0 +1,581 @@
+{
+  "name": "Зипка с принтом",
+  "brand": "ANGOC",
+  "price": {
+    "current": 2006.0,
+    "original": 5100.0,
+    "discount": 0,
+    "average": 0
+  },
+  "rating": 5,
+  "feedbacks": 452,
+  "stocks": {
+    "total": 3302,
+    "by_size": {
+      "42-44": 225,
+      "44-46": 1325,
+      "46-48": 878,
+      "48-50": 874,
+      "50-52": 0
+    }
+  },
+  "sales": {
+    "today": 0,
+    "total": 0,
+    "revenue": {
+      "daily": 0,
+      "weekly": 0,
+      "monthly": 0,
+      "total": 0
+    },
+    "profit": {
+      "daily": 0,
+      "weekly": 0,
+      "monthly": 0
+    }
+  },
+  "analytics": {},
+  "first_appearance": "07.06.2023",
+  "colors": {
+    "list": [
+      "черный"
+    ],
+    "count": 1,
+    "revenue_share": 100,
+    "stock_share": 100
+  },
+  "category": {
+    "id": 1724,
+    "parent_id": 1,
+    "name": "Категория 1724"
+  },
+  "search_ads": {
+    "impressions": 0,
+    "clicks": 0,
+    "ctr": 0,
+    "cost": 0,
+    "average_position": 0
+  },
+  "daily_data": [
+    {
+      "date": "08.05.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2986,
+      "search_freq": 5,
+      "ads_impressions": 15
+    },
+    {
+      "date": "09.05.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2986,
+      "search_freq": 5,
+      "ads_impressions": 10
+    },
+    {
+      "date": "10.05.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2987,
+      "search_freq": 4,
+      "ads_impressions": 11
+    },
+    {
+      "date": "11.05.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2987,
+      "search_freq": 4,
+      "ads_impressions": 7
+    },
+    {
+      "date": "12.05.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2988,
+      "search_freq": 4,
+      "ads_impressions": 8
+    },
+    {
+      "date": "13.05.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2988,
+      "search_freq": 4,
+      "ads_impressions": 11
+    },
+    {
+      "date": "14.05.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2989,
+      "search_freq": 4,
+      "ads_impressions": 11
+    },
+    {
+      "date": "15.05.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2989,
+      "search_freq": 5,
+      "ads_impressions": 15
+    },
+    {
+      "date": "16.05.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2990,
+      "search_freq": 4,
+      "ads_impressions": 10
+    },
+    {
+      "date": "17.05.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2990,
+      "search_freq": 5,
+      "ads_impressions": 10
+    },
+    {
+      "date": "18.05.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2991,
+      "search_freq": 4,
+      "ads_impressions": 12
+    },
+    {
+      "date": "19.05.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2991,
+      "search_freq": 4,
+      "ads_impressions": 8
+    },
+    {
+      "date": "20.05.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2992,
+      "search_freq": 5,
+      "ads_impressions": 15
+    },
+    {
+      "date": "21.05.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2992,
+      "search_freq": 4,
+      "ads_impressions": 9
+    },
+    {
+      "date": "22.05.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2993,
+      "search_freq": 5,
+      "ads_impressions": 13
+    },
+    {
+      "date": "23.05.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2993,
+      "search_freq": 5,
+      "ads_impressions": 12
+    },
+    {
+      "date": "24.05.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2994,
+      "search_freq": 4,
+      "ads_impressions": 8
+    },
+    {
+      "date": "25.05.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2994,
+      "search_freq": 4,
+      "ads_impressions": 11
+    },
+    {
+      "date": "26.05.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2995,
+      "search_freq": 4,
+      "ads_impressions": 7
+    },
+    {
+      "date": "27.05.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2995,
+      "search_freq": 4,
+      "ads_impressions": 11
+    },
+    {
+      "date": "28.05.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2996,
+      "search_freq": 4,
+      "ads_impressions": 7
+    },
+    {
+      "date": "29.05.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2996,
+      "search_freq": 4,
+      "ads_impressions": 8
+    },
+    {
+      "date": "30.05.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2997,
+      "search_freq": 4,
+      "ads_impressions": 10
+    },
+    {
+      "date": "31.05.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2997,
+      "search_freq": 4,
+      "ads_impressions": 10
+    },
+    {
+      "date": "01.06.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2998,
+      "search_freq": 5,
+      "ads_impressions": 11
+    },
+    {
+      "date": "02.06.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2998,
+      "search_freq": 4,
+      "ads_impressions": 11
+    },
+    {
+      "date": "03.06.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2999,
+      "search_freq": 5,
+      "ads_impressions": 15
+    },
+    {
+      "date": "04.06.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 2999,
+      "search_freq": 4,
+      "ads_impressions": 7
+    },
+    {
+      "date": "05.06.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 3000,
+      "search_freq": 5,
+      "ads_impressions": 11
+    },
+    {
+      "date": "06.06.2025",
+      "revenue": 5100,
+      "orders": 1,
+      "stock": 3000,
+      "search_freq": 5,
+      "ads_impressions": 13
+    }
+  ],
+  "brand_info": {
+    "name": "ANGOC",
+    "total_items": 399,
+    "avg_price": 2464,
+    "avg_rating": 4.8,
+    "total_sales": 5870,
+    "total_revenue": 14463680,
+    "category_position": 4,
+    "categories": [
+      "Аксессуары",
+      "Красота",
+      "Одежда"
+    ],
+    "sales_dynamics": [
+      {
+        "date": "2025-06-06",
+        "sales": 32,
+        "revenue": 78848
+      },
+      {
+        "date": "2025-06-05",
+        "sales": 34,
+        "revenue": 83776
+      },
+      {
+        "date": "2025-06-04",
+        "sales": 25,
+        "revenue": 61600
+      },
+      {
+        "date": "2025-06-03",
+        "sales": 38,
+        "revenue": 93632
+      },
+      {
+        "date": "2025-06-02",
+        "sales": 34,
+        "revenue": 83776
+      },
+      {
+        "date": "2025-06-01",
+        "sales": 33,
+        "revenue": 81312
+      },
+      {
+        "date": "2025-05-31",
+        "sales": 32,
+        "revenue": 78848
+      },
+      {
+        "date": "2025-05-30",
+        "sales": 30,
+        "revenue": 73920
+      },
+      {
+        "date": "2025-05-29",
+        "sales": 31,
+        "revenue": 76384
+      },
+      {
+        "date": "2025-05-28",
+        "sales": 32,
+        "revenue": 78848
+      },
+      {
+        "date": "2025-05-27",
+        "sales": 33,
+        "revenue": 81312
+      },
+      {
+        "date": "2025-05-26",
+        "sales": 29,
+        "revenue": 71456
+      },
+      {
+        "date": "2025-05-25",
+        "sales": 29,
+        "revenue": 71456
+      },
+      {
+        "date": "2025-05-24",
+        "sales": 34,
+        "revenue": 83776
+      },
+      {
+        "date": "2025-05-23",
+        "sales": 32,
+        "revenue": 78848
+      },
+      {
+        "date": "2025-05-22",
+        "sales": 34,
+        "revenue": 83776
+      },
+      {
+        "date": "2025-05-21",
+        "sales": 27,
+        "revenue": 66528
+      },
+      {
+        "date": "2025-05-20",
+        "sales": 26,
+        "revenue": 64064
+      },
+      {
+        "date": "2025-05-19",
+        "sales": 36,
+        "revenue": 88704
+      },
+      {
+        "date": "2025-05-18",
+        "sales": 33,
+        "revenue": 81312
+      },
+      {
+        "date": "2025-05-17",
+        "sales": 36,
+        "revenue": 88704
+      },
+      {
+        "date": "2025-05-16",
+        "sales": 30,
+        "revenue": 73920
+      },
+      {
+        "date": "2025-05-15",
+        "sales": 30,
+        "revenue": 73920
+      },
+      {
+        "date": "2025-05-14",
+        "sales": 29,
+        "revenue": 71456
+      },
+      {
+        "date": "2025-05-13",
+        "sales": 26,
+        "revenue": 64064
+      },
+      {
+        "date": "2025-05-12",
+        "sales": 30,
+        "revenue": 73920
+      },
+      {
+        "date": "2025-05-11",
+        "sales": 37,
+        "revenue": 91168
+      },
+      {
+        "date": "2025-05-10",
+        "sales": 29,
+        "revenue": 71456
+      },
+      {
+        "date": "2025-05-09",
+        "sales": 27,
+        "revenue": 66528
+      },
+      {
+        "date": "2025-05-08",
+        "sales": 28,
+        "revenue": 68992
+      }
+    ],
+    "competitors": [
+      {
+        "name": "TopStyle",
+        "total_items": 749,
+        "avg_price": 2600,
+        "total_sales": 3658
+      },
+      {
+        "name": "FashionHub",
+        "total_items": 228,
+        "avg_price": 2031,
+        "total_sales": 3528
+      },
+      {
+        "name": "TrendMark",
+        "total_items": 304,
+        "avg_price": 2489,
+        "total_sales": 5713
+      },
+      {
+        "name": "StyleMax",
+        "total_items": 319,
+        "avg_price": 2488,
+        "total_sales": 8676
+      },
+      {
+        "name": "CoolBrand",
+        "total_items": 634,
+        "avg_price": 2926,
+        "total_sales": 8706
+      }
+    ],
+    "items_stats": [
+      {
+        "name": "Товар ANGOC #1",
+        "article": 7601485,
+        "price": 2315,
+        "sales": 75,
+        "revenue": 49533,
+        "rating": 3.8
+      },
+      {
+        "name": "Товар ANGOC #2",
+        "article": 4345731,
+        "price": 1736,
+        "sales": 79,
+        "revenue": 38349,
+        "rating": 4.3
+      },
+      {
+        "name": "Товар ANGOC #3",
+        "article": 6056258,
+        "price": 2200,
+        "sales": 49,
+        "revenue": 10614,
+        "rating": 3.3
+      },
+      {
+        "name": "Товар ANGOC #4",
+        "article": 2237140,
+        "price": 1764,
+        "sales": 89,
+        "revenue": 90777,
+        "rating": 4.5
+      },
+      {
+        "name": "Товар ANGOC #5",
+        "article": 5351057,
+        "price": 2115,
+        "sales": 51,
+        "revenue": 97423,
+        "rating": 4.9
+      },
+      {
+        "name": "Товар ANGOC #6",
+        "article": 9381458,
+        "price": 2427,
+        "sales": 78,
+        "revenue": 12370,
+        "rating": 5.0
+      },
+      {
+        "name": "Товар ANGOC #7",
+        "article": 3493631,
+        "price": 3051,
+        "sales": 66,
+        "revenue": 71946,
+        "rating": 4.8
+      },
+      {
+        "name": "Товар ANGOC #8",
+        "article": 6865791,
+        "price": 2726,
+        "sales": 64,
+        "revenue": 69576,
+        "rating": 4.9
+      },
+      {
+        "name": "Товар ANGOC #9",
+        "article": 7916218,
+        "price": 2868,
+        "sales": 46,
+        "revenue": 99286,
+        "rating": 3.5
+      },
+      {
+        "name": "Товар ANGOC #10",
+        "article": 2983969,
+        "price": 2098,
+        "sales": 85,
+        "revenue": 34441,
+        "rating": 4.2
+      }
+    ]
+  }
+}

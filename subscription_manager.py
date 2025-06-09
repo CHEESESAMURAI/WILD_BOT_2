@@ -402,24 +402,28 @@ class SubscriptionManager:
             return {
                 'product_analysis': 0,
                 'niche_analysis': 0,
-                'tracking_items': 0
+                'tracking_items': 0,
+                'brand_analysis': 0
             }
         
         limits = {
             'basic': {
                 'product_analysis': 50,
                 'niche_analysis': 20,
-                'tracking_items': 10
+                'tracking_items': 10,
+                'brand_analysis': 10
             },
             'pro': {
                 'product_analysis': float('inf'),
                 'niche_analysis': float('inf'),
-                'tracking_items': 50
+                'tracking_items': 50,
+                'brand_analysis': 50
             },
             'business': {
                 'product_analysis': float('inf'),
                 'niche_analysis': float('inf'),
-                'tracking_items': 200
+                'tracking_items': 200,
+                'brand_analysis': float('inf')
             }
         }
         user_limits = limits.get(subscription_type, limits['basic'])

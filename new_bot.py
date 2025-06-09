@@ -34,6 +34,50 @@ from urllib.parse import urlparse
 import random
 import aiohttp
 import sys
+import matplotlib.dates as mdates
+from matplotlib.ticker import MaxNLocator
+import seaborn as sns
+import pandas as pd
+import numpy as np
+from typing import Dict, List, Union, Optional
+import datetime
+from datetime import datetime, timedelta
+import requests
+from urllib.parse import urlparse
+import random
+import math
+import aiohttp
+from bs4 import BeautifulSoup
+import locale
+import time
+import base64
+from PIL import Image
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as ReportLabImage, Table, TableStyle
+from reportlab.lib.units import inch
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.filters import Command
+from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
+from aiogram.types.input_file import BufferedInputFile
+from aiogram.utils.markdown import hbold, hitalic, hcode, hlink, hunderline, hstrikethrough
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.enums import ParseMode
+
+from subscription_manager import SubscriptionManager
+from product_mpstat import get_product_mpstat_info
+from wb_product_info import get_wb_product_info as get_new_wb_product_info
+from product_data_merger import get_combined_product_info
+from product_data_merger import get_brand_info
+from product_data_formatter import format_enhanced_product_analysis, generate_daily_charts, generate_brand_charts
+from reportlab.graphics.charts.piecharts import Pie
+from reportlab.graphics.shapes import Drawing
+from reportlab.graphics.charts.linecharts import HorizontalLineChart
+from reportlab.graphics.charts.barcharts import VerticalBarChart
+from brand_analysis import get_brand_info, format_brand_analysis
 
 # Настройка логирования
 logging.basicConfig(
@@ -47,7 +91,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Инициализация бота и диспетчера
-BOT_TOKEN = "7790448077:AAFiiS0a44A40zJUEivONLRutB-kqradDdE"  # Обновленный токен
+BOT_TOKEN = "7984401479:AAHGKTVrRLxrJTuuehuGa4XsYmJ2bpCbe1U"  # Обновленный токен
 ADMIN_ID = 1659228199  # Замените на ваш ID в Telegram
 # Ключ для serper.dev API
 SERPER_API_KEY = "8ba851ed7ae1e6a655102bea15d73fdb39cdac79"
@@ -86,19 +130,22 @@ SUBSCRIPTION_LIMITS = {
         'product_analysis': 10,
         'niche_analysis': 5,
         'tracking_items': 10,
-        'global_search': 20
+        'global_search': 20,
+        'brand_analysis': float('inf')
     },
     'pro': {
         'product_analysis': 50,
         'niche_analysis': 20,
         'tracking_items': 50,
-        'global_search': 100
+        'global_search': 100,
+        'brand_analysis': float('inf')
     },
     'business': {
         'product_analysis': float('inf'),
         'niche_analysis': float('inf'),
         'tracking_items': 200,
-        'global_search': float('inf')
+        'global_search': float('inf'),
+        'brand_analysis': float('inf')
     }
 }
 
@@ -111,6 +158,7 @@ class UserStates(StatesGroup):
     waiting_for_payment_screenshot = State()
     waiting_for_search = State()
     viewing_search_results = State()
+    waiting_for_brand = State()  # Состояние для ожидания ввода бренда
 
 # Приветственное сообщение
 WELCOME_MESSAGE = (
@@ -144,8 +192,12 @@ def main_menu_kb():
             InlineKeyboardButton(text="📈 Анализ ниши", callback_data="niche_analysis")
         ],
         [
-            InlineKeyboardButton(text="🌐 Глобальный поиск", callback_data="product_search"),
+            InlineKeyboardButton(text="🏢 Анализ бренда", callback_data="brand_analysis"),
             InlineKeyboardButton(text="📱 Отслеживание", callback_data="track_item")
+        ],
+        [
+            InlineKeyboardButton(text="🌐 Глобальный поиск", callback_data="product_search"),
+            InlineKeyboardButton(text="📦 Отслеживаемые", callback_data="tracked")
         ],
         [
             InlineKeyboardButton(text="👤 Личный кабинет", callback_data="profile"),
@@ -375,6 +427,106 @@ async def handle_subscription_selection(callback_query: types.CallbackQuery):
         )
 
 # Добавляем обработчик глобального поиска
+
+@dp.callback_query(lambda c: c.data == 'brand_analysis')
+async def handle_brand_analysis(callback_query: types.CallbackQuery, state: FSMContext):
+    """Обрабатывает запрос на анализ бренда."""
+    user_id = callback_query.from_user.id
+    
+    # Проверяем подписку
+    can_perform = subscription_manager.can_perform_action(user_id, 'brand_analysis')
+    if not can_perform:
+        await callback_query.message.answer("⚠️ У вас нет активной подписки или закончился лимит запросов. Перейдите в раздел подписок для получения доступа.", reply_markup=main_menu_kb())
+        await callback_query.answer()
+        return
+    
+    # Переходим в состояние ожидания бренда
+    await state.set_state(UserStates.waiting_for_brand)
+    await callback_query.message.answer("Введите название бренда для анализа:", reply_markup=back_keyboard())
+    await callback_query.answer()
+
+@dp.message(lambda message: message.text and message.text.strip(), UserStates.waiting_for_brand)
+async def handle_brand_name(message: types.Message, state: FSMContext):
+    """Обрабатывает ввод названия бренда или артикула товара."""
+    try:
+        user_id = message.from_user.id
+        input_text = message.text.strip()
+        
+        # Отправляем сообщение о начале анализа
+        processing_msg = await message.answer("⏳ Анализирую, это может занять до 30 секунд...")
+        
+        brand_name = input_text
+        
+        # Проверяем, является ли ввод артикулом (только цифры)
+        if input_text.isdigit():
+            # Получаем информацию о товаре по артикулу
+            product_info = await get_wb_product_info(input_text)
+            
+            if not product_info:
+                await processing_msg.delete()
+                await message.answer("❌ Не удалось получить информацию о товаре. Проверьте артикул и попробуйте ещё раз.", reply_markup=back_keyboard())
+                return
+                
+            # Извлекаем название бренда из информации о товаре
+            brand_name = product_info.get('brand')
+            
+            if not brand_name:
+                await processing_msg.delete()
+                await message.answer("❌ Не удалось определить бренд по данному артикулу. Попробуйте ввести название бренда напрямую.", reply_markup=back_keyboard())
+                return
+                
+            await message.answer(f"🔍 Найден бренд: {brand_name}")
+        
+        # Генерируем информацию о бренде
+        brand_info = await get_brand_info(brand_name)
+        
+        if not brand_info:
+            await processing_msg.delete()
+            await message.answer("❌ Не удалось получить информацию о бренде. Проверьте название и попробуйте ещё раз.", reply_markup=back_keyboard())
+            return
+        
+        # Создаем объект для отправки в функцию генерации графиков
+        product_info = {"brand_info": brand_info}
+        
+        # Форматируем результаты анализа
+        result = format_brand_analysis(brand_info)
+        
+        # Генерируем графики бренда
+        brand_chart_paths = generate_brand_charts(product_info)
+        
+        # Отправляем основную информацию
+        await processing_msg.delete()
+        await message.answer(result, reply_markup=back_keyboard())
+        
+        # Словарь с описаниями графиков бренда
+        brand_chart_descriptions = {
+            'brand_sales_chart': "📈 Динамика продаж бренда — изменение объема продаж и выручки по дням с трендами и средними значениями",
+            'brand_competitors_chart': "🥊 Сравнение с конкурентами — сопоставление по количеству товаров и продажам",
+            'brand_categories_chart': "📁 Распределение по категориям — показывает долю товаров бренда в разных категориях",
+            'brand_top_items_chart': "🏆 Топ товары бренда — самые продаваемые позиции с показателями продаж и выручки",
+            'brand_radar_chart': "📊 Ключевые показатели бренда — интегральная оценка характеристик бренда на рынке"
+        }
+        
+        # Отправляем графики бренда, если они есть
+        if brand_chart_paths:
+            await message.answer("📊 ГРАФИКИ ПО БРЕНДУ:", reply_markup=back_keyboard())
+            
+            for chart_path in brand_chart_paths:
+                chart_name = chart_path.replace('.png', '')
+                caption = brand_chart_descriptions.get(chart_name, f"График: {chart_name}")
+                
+                with open(chart_path, 'rb') as photo:
+                    await message.answer_photo(FSInputFile(chart_path), caption=caption)
+        
+        await state.clear()
+        
+        # Декрементируем счетчик действий
+        subscription_manager.decrement_action_count(user_id, "brand_analysis")
+        
+    except Exception as e:
+        logger.error(f"Error in handle_brand_name: {str(e)}", exc_info=True)
+        await message.answer(f"❌ Произошла ошибка при анализе бренда: {str(e)}", reply_markup=back_keyboard())
+        await state.clear() 
 @dp.callback_query(lambda c: c.data == "product_search")
 async def handle_global_search(callback_query: types.CallbackQuery, state: FSMContext):
     try:
@@ -1834,101 +1986,89 @@ async def handle_product_article(message: types.Message, state: FSMContext):
         logger.info(f"User {user_id} is waiting for product analysis")
 
         # Проверяем подписку
-        can_perform = subscription_manager.can_perform_action(user_id, 'product_analysis')
+        can_perform = subscription_manager.can_perform_action(user_id, "product_analysis")
         if not can_perform:
-            await message.answer("❌ У вас нет активной подписки или превышен лимит действий", reply_markup=main_menu_kb())
+            await message.answer("⚠️ У вас нет активной подписки или закончился лимит запросов. Перейдите в раздел подписок для получения доступа.", reply_markup=main_menu_kb())
             await state.clear()
             return
 
-        await message.answer("⏳ Выполняется анализ артикула, подождите...")
-        product_info = await get_wb_product_info(article)
+        # Проверяем корректность артикула
+        if not article.isdigit():
+            await message.answer("⚠️ Введите корректный артикул (только цифры).")
+            return
+
+        # Отправляем сообщение о начале анализа
+        processing_msg = await message.answer("⏳ Анализирую товар, это может занять до 30 секунд...")
+
+        # Получаем объединенные данные о продукте из MPSTAT и Wildberries API
+        product_info = await get_combined_product_info(article)
+            
         if not product_info:
-            await message.answer("❌ Не удалось получить информацию по артикулу. Проверьте правильность артикула.", reply_markup=main_menu_kb())
-            await state.clear()
+            await processing_msg.delete()
+            await message.answer("❌ Не удалось получить информацию о товаре. Проверьте артикул и попробуйте ещё раз.", reply_markup=back_keyboard())
             return
-        result = await format_product_analysis(product_info, article)
-
-        # --- Построение и отправка графиков ---
-        daily_sales = product_info['sales']['today']
-        used_estimation = False
-        if not daily_sales or daily_sales == 0:
-            total_sales = product_info['sales'].get('total', 0)
-            feedbacks = product_info.get('feedbacks', 0)
-            estimated_total_sales = feedbacks * 30
-            total_sales = max(total_sales, estimated_total_sales)
-            daily_sales = max(1, round(total_sales / 365)) if total_sales > 0 else 0
-            used_estimation = True
-        week_sales = daily_sales * 7 if not used_estimation else round(total_sales / 52)
-        month_sales = daily_sales * 30 if not used_estimation else round(total_sales / 12)
-        price = product_info['price']['current']
-        commission = 0.15
-        daily_revenue = daily_sales * price
-        week_revenue = week_sales * price
-        month_revenue = month_sales * price
-        daily_profit = int(daily_revenue * (1 - commission))
-        week_profit = int(week_revenue * (1 - commission))
-        month_profit = int(month_revenue * (1 - commission))
-        # Графики
-        sales_plot = build_area_chart(['Сутки', 'Неделя', 'Месяц'], [daily_sales, week_sales, month_sales], [daily_revenue, week_revenue, month_revenue], [daily_profit, week_profit, month_profit], f'Прогноз продаж {article}', 'sales_')
-        revenue_plot = build_area_chart(['Сутки', 'Неделя', 'Месяц'], [daily_sales, week_sales, month_sales], [daily_revenue, week_revenue, month_revenue], [daily_profit, week_profit, month_profit], f'Прогноз выручки {article}', 'revenue_')
-        profit_plot = build_area_chart(['Сутки', 'Неделя', 'Месяц'], [daily_sales, week_sales, month_sales], [daily_revenue, week_revenue, month_revenue], [daily_profit, week_profit, month_profit], f'Прогноз прибыли {article}', 'profit_')
-        # Отправка графиков
-        await bot.send_photo(message.chat.id, FSInputFile(sales_plot), caption="График прогнозных продаж", reply_markup=None)
-        await bot.send_photo(message.chat.id, FSInputFile(revenue_plot), caption="График прогнозной выручки", reply_markup=None)
-        await bot.send_photo(message.chat.id, FSInputFile(profit_plot), caption="График прогнозной прибыли", reply_markup=None)
-        # Текстовый анализ
-        await bot.send_message(message.chat.id, result, parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_kb())
-
-        # --- Визуализация рекламы/глобального поиска ---
-        # Автоматически запускаем глобальный поиск по названию товара
-        try:
-            search_query = product_info.get('name') or product_info.get('brand') or article
-            search_results = await global_search_serper_detailed(search_query)
-            mentions = search_results.get('results', [])
-        except Exception as search_err:
-            logger.error(f"Global search error: {search_err}")
-            mentions = []
-        chart_path = None
-        if mentions:
-            platforms = [m.get('site', 'Неизвестно') for m in mentions]
-            revenues = [m.get('approx_revenue', 0) for m in mentions]
-            # График по выручке
-            chart_path = build_area_chart(platforms, revenues, revenues, revenues, f'Потенциальная выручка по площадкам', 'adv_')
-            await bot.send_photo(message.chat.id, FSInputFile(chart_path), caption="Потенциальная выручка по площадкам (сторонняя реклама)")
-        else:
-            await bot.send_message(message.chat.id, "Нет данных о сторонней рекламе или продвижении в соцсетях.")
-
-        # --- ДОБАВЛЯЕМ Instagram-поиск по хэштегу, если нет instagram.com ---
-        if not any('instagram.com' in m.get('site', '') for m in mentions):
-            insta_posts = search_instagram_by_hashtag(article)
-            if product_info.get('brand'):
-                insta_posts += search_instagram_by_hashtag(product_info['brand'])
-            if insta_posts:
-                mentions.extend(insta_posts)
-                # Перестроить график с учетом новых данных
-                platforms = [m.get('site', 'Неизвестно') for m in mentions]
-                revenues = [m.get('approx_revenue', 0) for m in mentions]
-                chart_path = build_area_chart(platforms, revenues, revenues, revenues, f'Потенциальная выручка по площадкам', 'adv_')
-                await bot.send_photo(message.chat.id, FSInputFile(chart_path), caption="Потенциальная выручка по площадкам (Instagram)")
-
-        # --- PDF-отчёт по глобальному поиску ---
-        try:
-            pdf_path = generate_global_search_pdf(article, mentions, chart_path)
-            await bot.send_document(message.chat.id, FSInputFile(pdf_path), caption="PDF-отчёт по глобальному поиску по артикулу")
-        except Exception as pdf_err:
-            logger.error(f"PDF error: {pdf_err}")
-            await bot.send_message(message.chat.id, f"❌ Ошибка при формировании PDF-отчёта: {pdf_err}")
+                
+        # Форматируем результаты анализа с расширенной информацией
+        formatted_result = await format_enhanced_product_analysis(product_info, article)
+            
+        # Генерируем графики
+        chart_paths = generate_daily_charts(product_info)
+        
+        # Отправляем основную информацию
+        await processing_msg.delete()
+        await message.answer(formatted_result, reply_markup=back_keyboard())
+        
+        # Словарь с описаниями графиков товара
+        chart_descriptions = {
+            'revenue_chart': "📈 График выручки — динамика дневной выручки за последний месяц",
+            'orders_chart': "📊 График заказов — количество заказов товара по дням",
+            'stock_chart': "📦 График товарных остатков — изменение остатков на складах",
+            'freq_chart': "🔍 График частотности артикула — востребованность товара в поиске",
+            'ads_chart': "🎯 График рекламы в поиске — эффективность продвижения товара"
+        }
+        
+        # Отправляем графики товара, если они есть
+        if chart_paths:
+            await message.answer("📊 ГРАФИКИ ПО ТОВАРУ:", reply_markup=back_keyboard())
+            
+            for chart_path in chart_paths:
+                chart_name = chart_path.replace('.png', '')
+                caption = chart_descriptions.get(chart_name, f"График: {chart_name}")
+                
+                with open(chart_path, 'rb') as photo:
+                    await message.answer_photo(FSInputFile(chart_path), caption=caption)
+        
+        # Генерируем графики бренда
+        brand_chart_paths = generate_brand_charts(product_info)
+        
+        # Словарь с описаниями графиков бренда
+        brand_chart_descriptions = {
+            'brand_sales_chart': "📈 Динамика продаж бренда — изменение объема продаж и выручки по дням с трендами и средними значениями",
+            'brand_competitors_chart': "🥊 Сравнение с конкурентами — сопоставление по количеству товаров и продажам",
+            'brand_categories_chart': "📁 Распределение по категориям — показывает долю товаров бренда в разных категориях",
+            'brand_top_items_chart': "🏆 Топ товары бренда — самые продаваемые позиции с показателями продаж и выручки",
+            'brand_radar_chart': "📊 Ключевые показатели бренда — интегральная оценка характеристик бренда на рынке"
+        }
+        
+        # Отправляем графики бренда, если они есть
+        if brand_chart_paths:
+            await message.answer("📊 ГРАФИКИ ПО БРЕНДУ:", reply_markup=back_keyboard())
+            
+            for chart_path in brand_chart_paths:
+                chart_name = chart_path.replace('.png', '')
+                caption = brand_chart_descriptions.get(chart_name, f"График: {chart_name}")
+                
+                with open(chart_path, 'rb') as photo:
+                    await message.answer_photo(FSInputFile(chart_path), caption=caption)
+        
+        # Записываем использование запроса
+        # subscription_manager.record_action(user_id, "product_analysis")
+        
         await state.clear()
-
-        # --- Встраиваем в handle_product_article после основного поиска ---
-        # После получения mentions:
-        # if not any('instagram.com' in m.get('site', '') for m in mentions):
-        #     hashtag = article  # или product_info['brand']
-        #     insta_posts = search_instagram_by_hashtag(hashtag)
-        #     mentions.extend(insta_posts)
+        
     except Exception as e:
-        logger.error(f"Error in handle_product_article: {str(e)}")
-        await message.answer("❌ Произошла ошибка при анализе артикула.", reply_markup=main_menu_kb())
+        logger.error(f"Error in handle_product_article: {str(e)}", exc_info=True)
+        await message.answer(f"❌ Произошла ошибка при анализе товара: {str(e)}", reply_markup=back_keyboard())
         await state.clear()
 
 # Добавляем периодическую проверку истекающих подписок
@@ -1954,41 +2094,57 @@ async def check_expiring_subscriptions():
                 )
         await asyncio.sleep(3600)  # Проверяем каждый час
 
-# Обновляем форматирование результатов анализа товара
 async def format_product_analysis(product_info, article):
     """Форматирует результаты анализа товара."""
     
     # Получаем продажи за сутки
     daily_sales = product_info['sales']['today']
     used_estimation = False
-    # Пробуем альтернативные источники, если нет sales_today
-    if not daily_sales or daily_sales == 0:
-        total_sales = product_info['sales'].get('total', 0)
-        sales_per_month = product_info.get('salesPerMonth', 0)
-        feedbacks = product_info.get('feedbacks', 0)
-        # Оценка по отзывам: 1 отзыв ≈ 30 продаж за всё время
-        estimated_total_sales = feedbacks * 30
-        # Если total_sales уже есть и больше — используем его
-        total_sales = max(total_sales, estimated_total_sales)
-        # Оценка: за месяц — 1/12, за неделю — 1/52, за сутки — 1/365
-        estimated_month = round(total_sales / 12)
-        estimated_week = round(total_sales / 52)
-        daily_sales = max(1, round(total_sales / 365)) if total_sales > 0 else 0
-        used_estimation = True
-    else:
+    
+    # Определяем данные о выручке и прибыли
+    if 'revenue' in product_info['sales'] and 'profit' in product_info['sales']:
+        # Используем данные напрямую из API
+        daily_revenue = product_info['sales']['revenue']['daily']
+        weekly_revenue = product_info['sales']['revenue']['weekly']
+        monthly_revenue = product_info['sales']['revenue']['monthly']
+        total_revenue = product_info['sales']['revenue'].get('total', 0)
+        
+        daily_profit = product_info['sales']['profit']['daily']
+        weekly_profit = product_info['sales']['profit']['weekly']
+        monthly_profit = product_info['sales']['profit']['monthly']
+        
         estimated_week = daily_sales * 7
         estimated_month = daily_sales * 30
+    else:
+        # Пробуем альтернативные источники, если нет sales_today
+        if not daily_sales or daily_sales == 0:
+            total_sales = product_info['sales'].get('total', 0)
+            sales_per_month = product_info.get('salesPerMonth', 0)
+            feedbacks = product_info.get('feedbacks', 0)
+            # Оценка по отзывам: 1 отзыв ≈ 30 продаж за всё время
+            estimated_total_sales = feedbacks * 30
+            # Если total_sales уже есть и больше — используем его
+            total_sales = max(total_sales, estimated_total_sales)
+            # Оценка: за месяц — 1/12, за неделю — 1/52, за сутки — 1/365
+            estimated_month = round(total_sales / 12)
+            estimated_week = round(total_sales / 52)
+            daily_sales = max(1, round(total_sales / 365)) if total_sales > 0 else 0
+            used_estimation = True
+        else:
+            estimated_week = daily_sales * 7
+            estimated_month = daily_sales * 30
+        
+        daily_revenue = daily_sales * product_info['price']['current']
+        estimated_week_revenue = estimated_week * product_info['price']['current']
+        estimated_month_revenue = estimated_month * product_info['price']['current']
+        total_revenue = product_info['sales'].get('total', 0) * product_info['price'].get('average', product_info['price']['current'])
+        
+        # Считаем примерную прибыль (берем 30% от выручки)
+        profit_margin = 0.3
+        daily_profit = daily_revenue * profit_margin
+        weekly_profit = estimated_week_revenue * profit_margin
+        monthly_profit = estimated_month_revenue * profit_margin
     
-    daily_revenue = daily_sales * product_info['price']['current']
-    estimated_week_revenue = estimated_week * product_info['price']['current']
-    estimated_month_revenue = estimated_month * product_info['price']['current']
-    
-    # Считаем примерную прибыль (берем 30% от выручки)
-    profit_margin = 0.3
-    daily_profit = daily_revenue * profit_margin
-    estimated_week_profit = estimated_week_revenue * profit_margin
-    estimated_month_profit = estimated_month_revenue * profit_margin
-
     # Корректная обработка рейтинга
     rating = product_info['rating']
     if rating > 5:
@@ -2006,6 +2162,11 @@ async def format_product_analysis(product_info, article):
     if product_info['price']['discount'] > 0:
         result += f" (-{product_info['price']['discount']}% от {product_info['price']['original']}₽)"
     
+    # Добавляем среднюю цену, если она отличается от текущей
+    if 'average' in product_info['price'] and abs(product_info['price']['average'] - product_info['price']['current']) > 50:
+        avg_price = "{:,}".format(int(product_info['price']['average'])).replace(',', ' ')
+        result += f"\n💲 Средняя цена: {avg_price}₽"
+        
     result += (
         f"\n⭐ Рейтинг: {rating:.1f}/5\n"
         f"📝 Отзывов: {product_info['feedbacks']}\n"
@@ -2020,65 +2181,105 @@ async def format_product_analysis(product_info, article):
             if qty > 0:
                 result += f"• {size}: {qty} шт.\n"
     
+    # Дополнительная аналитика из MPSTAT
+    if 'analytics' in product_info and product_info['analytics']:
+        analytics = product_info['analytics']
+        
+        if analytics.get('purchase_rate', 0) > 0:
+            result += f"\n*Показатели эффективности:*\n"
+            
+            if analytics.get('purchase_rate', 0) > 0:
+                result += f"🛒 Процент выкупа: {analytics['purchase_rate']}%\n"
+            
+            if analytics.get('purchase_after_return', 0) > 0:
+                result += f"♻️ Выкуп с учетом возвратов: {analytics['purchase_after_return']}%\n"
+            
+            if analytics.get('turnover_days', 0) > 0:
+                result += f"⏱ Оборачиваемость: {analytics['turnover_days']:.1f} дней\n"
+            
+            if analytics.get('days_in_stock', 0) > 0 and analytics.get('days_with_sales', 0) > 0:
+                days_in_stock = analytics['days_in_stock']
+                days_with_sales = analytics['days_with_sales']
+                sales_rate = round((days_with_sales / max(days_in_stock, 1)) * 100)
+                result += f"📆 Дней в наличии: {days_in_stock}\n"
+                result += f"📈 Дней с продажами: {days_with_sales} ({sales_rate}%)\n"
+    
     # Продажи и выручка
     if daily_sales == 0:
         result += (
             f"\n*Продажи и выручка:*\n"
             f"❗ Нет данных о продажах за сутки.\n"
-            f"💰 Выручка за сутки: 0₽\n"
-            f"💎 Прибыль за сутки: 0₽\n"
         )
-        week_note = "❗ Нет данных для прогноза."
-        month_note = "❗ Нет данных для прогноза."
     else:
+        # Форматируем числа с разделителем тысяч
+        daily_revenue_fmt = "{:,}".format(int(daily_revenue)).replace(',', ' ')
+        daily_profit_fmt = "{:,}".format(int(daily_profit)).replace(',', ' ')
+        weekly_revenue_fmt = "{:,}".format(int(weekly_revenue)).replace(',', ' ')
+        weekly_profit_fmt = "{:,}".format(int(weekly_profit)).replace(',', ' ')
+        monthly_revenue_fmt = "{:,}".format(int(monthly_revenue)).replace(',', ' ')
+        monthly_profit_fmt = "{:,}".format(int(monthly_profit)).replace(',', ' ')
+        total_revenue_fmt = "{:,}".format(int(total_revenue)).replace(',', ' ')
+        
         result += (
             f"\n*Продажи и выручка:*\n"
             f"📈 Продажи за сутки: {daily_sales} шт.\n"
-            f"💰 Выручка за сутки: {daily_revenue:,.0f}₽\n"
-            f"💎 Прибыль за сутки: {daily_profit:,.0f}₽\n"
+            f"💰 Выручка за сутки: {daily_revenue_fmt}₽\n"
+            f"💎 Прибыль за сутки: {daily_profit_fmt}₽\n"
+            f"\n*Прогноз на неделю:*\n"
+            f"📈 Продажи: ~{estimated_week} шт.\n"
+            f"💰 Выручка: ~{weekly_revenue_fmt}₽\n"
+            f"💎 Прибыль: ~{weekly_profit_fmt}₽\n"
+            f"\n*Прогноз на месяц:*\n"
+            f"📈 Продажи: ~{estimated_month} шт.\n"
+            f"💰 Выручка: ~{monthly_revenue_fmt}₽\n"
+            f"💎 Прибыль: ~{monthly_profit_fmt}₽\n"
         )
-        week_note = ""
-        month_note = ""
-    
-    # Прогноз на неделю
-    result += (
-        f"\n*Прогноз на неделю:*\n"
-        f"📈 Продажи: ~{estimated_week} шт.\n"
-        f"💰 Выручка: ~{estimated_week_revenue:,.0f}₽\n"
-        f"💎 Прибыль: ~{estimated_week_profit:,.0f}₽\n"
-    )
-    if week_note:
-        result += week_note + "\n"
-    
-    # Прогноз на месяц
-    result += (
-        f"\n*Прогноз на месяц:*\n"
-        f"📈 Продажи: ~{estimated_month} шт.\n"
-        f"💰 Выручка: ~{estimated_month_revenue:,.0f}₽\n"
-        f"💎 Прибыль: ~{estimated_month_profit:,.0f}₽\n"
-    )
-    if month_note:
-        result += month_note + "\n"
-    
-    # Пояснение, если использована оценка
-    if used_estimation:
-        result += ("\n_Данные по продажам оценочные, рассчитаны на основе количества отзывов и средней конверсии Wildberries. Реальные значения могут отличаться._\n")
+        
+        # Добавляем информацию о выручке за весь период
+        if total_revenue > 0:
+            result += f"\n💰 *Общая выручка за период:* {total_revenue_fmt}₽\n"
     
     # Добавляем рекомендации
-    recommendations = []
-    if rating < 4:
-        recommendations.append("\n💡 *Улучшить качество товара и обслуживания*\n- Проанализируйте отзывы покупателей: обратите внимание на повторяющиеся жалобы и пожелания.\n- Внедрите контроль качества на всех этапах производства и упаковки.\n- Улучшите сервис: быстрая доставка, вежливое общение, решение проблем клиентов.")
-    if product_info['feedbacks'] < 100:
-        recommendations.append("\n💡 *Увеличить количество отзывов*\n- Просите довольных клиентов оставлять отзывы, предлагайте бонусы или скидки за обратную связь.\n- Используйте QR-коды на упаковке для быстрого перехода к форме отзыва.\n- Отвечайте на все отзывы — это повышает доверие новых покупателей.")
-    if product_info['stocks']['total'] < 10:
-        recommendations.append("\n💡 *Пополнить остатки товара*\n- Следите за остатками на складе, чтобы не терять продажи из-за отсутствия товара.\n- Планируйте закупки заранее, особенно перед сезоном повышенного спроса.\n- Используйте автоматические уведомления о низких остатках.")
-    if product_info['price']['discount'] > 30:
-        recommendations.append("\n💡 *Проанализировать ценовую политику*\n- Сравните цены с конкурентами: возможно, скидка слишком велика и снижает вашу прибыль.\n- Используйте акции и скидки осознанно — для привлечения новых клиентов или распродажи остатков.\n- Тестируйте разные уровни скидок и отслеживайте их влияние на продажи.")
-    if daily_sales == 0 and product_info['stocks']['total'] > 0:
-        recommendations.append("\n💡 *Проработать маркетинговую стратегию*\n- Запустите рекламу в социальных сетях и на маркетплейсах.\n- Используйте красивые фото и видео, расскажите историю бренда.\n- Сотрудничайте с блогерами и лидерами мнений.\n- Проведите анализ целевой аудитории и настройте таргетированную рекламу.")
-    if not recommendations:
-        recommendations.append("\n✅ Ваш товар показывает хорошие результаты! Продолжайте следить за качеством и развивайте маркетинг для дальнейшего роста.")
-    result += "\n*Рекомендации:* " + "\n".join(recommendations)
+    result += "\n*Рекомендации:* \n"
+    
+    # Рекомендации по отзывам
+    if product_info['feedbacks'] < 10:
+        result += (
+            "💡 Увеличить количество отзывов\n"
+            "- Просите довольных клиентов оставлять отзывы, предлагайте бонусы или скидки за обратную связь.\n"
+            "- Используйте QR-коды на упаковке для быстрого перехода к форме отзыва.\n"
+            "- Отвечайте на все отзывы — это повышает доверие новых покупателей.\n"
+            "\n"
+        )
+    
+    # Рекомендации по остаткам
+    if product_info['stocks']['total'] < 10 and daily_sales > 0:
+        result += (
+            "💡 Пополнить остатки товара\n"
+            "- Следите за остатками на складе, чтобы не терять продажи из-за отсутствия товара.\n"
+            "- Планируйте закупки заранее, особенно перед сезоном повышенного спроса.\n"
+            "- Используйте автоматические уведомления о низких остатках.\n"
+            "\n"
+        )
+    
+    # Рекомендации по оборачиваемости
+    if 'analytics' in product_info and product_info['analytics'].get('turnover_days', 0) > 30:
+        result += (
+            "💡 Улучшить оборачиваемость товара\n"
+            "- Ваш товар залеживается на складе более 30 дней, что увеличивает издержки.\n"
+            "- Пересмотрите маркетинговую стратегию и ценовую политику.\n"
+            "- Запустите акции или скидки для ускорения продаж.\n"
+            "\n"
+        )
+    
+    # Рекомендации по выкупу
+    if 'analytics' in product_info and product_info['analytics'].get('purchase_rate', 100) < 70:
+        result += (
+            "💡 Повысить процент выкупа\n"
+            "- Улучшите качество фото и описания товара для более точного представления.\n"
+            "- Укажите подробные размерные сетки и характеристики.\n"
+            "- Проанализируйте причины отказов и возвратов.\n"
+        )
     
     return result
 
@@ -3665,7 +3866,7 @@ async def handle_tracking_article(message: types.Message, state: FSMContext):
         
         if success:
             await message.answer(
-                f"✅ Товар *{product_info['name']}* успешно добавлен в отслеживаемые!\n\n"
+                f"✅ Товар *{product_info['name']}* успешно добавлен в отслеживаемы!\n\n"
                 f"🔢 Артикул: {article}\n"
                 f"💰 Текущая цена: {product_info['price']['current']} ₽\n"
                 f"📦 Наличие: {product_info['stocks']['total']} шт.\n\n"

@@ -878,7 +878,12 @@ async def callback_handler(callback: types.CallbackQuery):
         await callback.message.edit_text("Введите артикул для анализа:", reply_markup=back_kb())
 
     elif data == "analysis_brand":
-        await callback.message.edit_text("Функция 'Анализ Бренда' пока в разработке (заглушка).", reply_markup=back_kb())
+        # Изменяем заглушку на перенаправление к новому боту для анализа бренда
+        pending_action[user_id] = {"action": "analysis_brand"}
+        await callback.message.edit_text(
+            "Введите название бренда для анализа:", 
+            reply_markup=back_kb()
+        )
 
     elif data == "analysis_supplier":
         await callback.message.edit_text("Функция 'Анализ Поставщика' пока в разработке (заглушка).", reply_markup=back_kb())
@@ -964,7 +969,60 @@ async def text_handler(message: types.Message):
         elif action == "top_up_wait_admin":
             await message.answer("Ожидайте проверки администратором.")
 
-
+        elif action == "analysis_brand":
+            brand_name = message.text.strip()
+            await message.answer(f"⏳ Анализирую бренд {brand_name}, это может занять некоторое время...")
+            
+            # Здесь мы переадресуем запрос на анализ бренда в новую функцию
+            try:
+                # Импортируем необходимые функции из brand_analysis.py
+                from brand_analysis import get_brand_info, format_brand_analysis
+                from product_data_formatter import generate_brand_charts
+                
+                # Получаем информацию о бренде
+                brand_info = await get_brand_info(brand_name)
+                
+                if not brand_info:
+                    await message.answer("❌ Не удалось получить информацию о бренде. Проверьте название и попробуйте ещё раз.", reply_markup=back_kb())
+                    pending_action.pop(user_id, None)
+                    return
+                
+                # Форматируем результаты
+                result = format_brand_analysis(brand_info)
+                
+                # Создаем объект для отправки в функцию генерации графиков
+                product_info = {"brand_info": brand_info}
+                
+                # Генерируем графики бренда
+                brand_chart_paths = generate_brand_charts(product_info)
+                
+                # Отправляем результаты
+                await message.answer(result, reply_markup=back_kb())
+                
+                # Словарь с описаниями графиков бренда
+                brand_chart_descriptions = {
+                    'brand_sales_chart': "📈 Динамика продаж бренда — изменение объема продаж и выручки по дням",
+                    'brand_competitors_chart': "🥊 Сравнение с конкурентами — сопоставление по количеству товаров и продажам",
+                    'brand_categories_chart': "📁 Распределение по категориям — показывает долю товаров бренда в разных категориях"
+                }
+                
+                # Отправляем графики бренда, если они есть
+                if brand_chart_paths:
+                    await message.answer("📊 ГРАФИКИ ПО БРЕНДУ:", reply_markup=back_kb())
+                    
+                    for chart_path in brand_chart_paths:
+                        chart_name = chart_path.replace('.png', '')
+                        caption = brand_chart_descriptions.get(chart_name, f"График: {chart_name}")
+                        
+                        with open(chart_path, 'rb') as photo:
+                            await message.answer_photo(photo, caption=caption)
+                
+            except Exception as e:
+                logger.error(f"Ошибка при анализе бренда: {str(e)}", exc_info=True)
+                await message.answer(f"❌ Произошла ошибка при анализе бренда: {str(e)}", reply_markup=back_kb())
+            
+            pending_action.pop(user_id, None)
+            return
 
         elif action == "analysis_article":
             article = message.text.strip()
