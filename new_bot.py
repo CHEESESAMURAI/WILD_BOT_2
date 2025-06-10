@@ -30,7 +30,7 @@ import numpy as np
 from fpdf import FPDF
 import instaloader
 import time
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 import random
 import aiohttp
 import sys
@@ -95,8 +95,8 @@ BOT_TOKEN = "7984401479:AAHGKTVrRLxrJTuuehuGa4XsYmJ2bpCbe1U"  # Обновлен
 ADMIN_ID = 1659228199  # Замените на ваш ID в Telegram
 # Ключ для serper.dev API
 SERPER_API_KEY = "8ba851ed7ae1e6a655102bea15d73fdb39cdac79"
-# Ключ для MPSTA API
-MPSTA_API_KEY = "682872eed804b5.13782565c9e71152c442e4c8c0dca9be2c1a53f2"
+# Обновляем API ключ
+MPSTATS_API_KEY = "68431d2ac72ea4.96910328a56006b24a55daf65db03835d5fe5b4d"  # Новый ключ MPSTATS API
 
 storage = MemoryStorage()
 bot = Bot(token=BOT_TOKEN)
@@ -114,7 +114,8 @@ COSTS = {
     'trend_analysis': 15,
     'niche_analysis': 20,
     'tracking': 5,
-    'global_search': 10  # Добавляем стоимость глобального поиска
+    'global_search': 10,  # Добавляем стоимость глобального поиска
+    'external_analysis': 15  # Добавляем стоимость анализа внешней рекламы
 }
 
 # Стоимость подписок
@@ -159,6 +160,7 @@ class UserStates(StatesGroup):
     waiting_for_search = State()
     viewing_search_results = State()
     waiting_for_brand = State()  # Состояние для ожидания ввода бренда
+    waiting_for_external = State()  # Состояние для ожидания ввода товара/артикула для анализа внешки
 
 # Приветственное сообщение
 WELCOME_MESSAGE = (
@@ -193,21 +195,22 @@ def main_menu_kb():
         ],
         [
             InlineKeyboardButton(text="🏢 Анализ бренда", callback_data="brand_analysis"),
-            InlineKeyboardButton(text="📱 Отслеживание", callback_data="track_item")
+            InlineKeyboardButton(text="🔍 Анализ внешки", callback_data="external_analysis")
         ],
         [
             InlineKeyboardButton(text="🌐 Глобальный поиск", callback_data="product_search"),
-            InlineKeyboardButton(text="📦 Отслеживаемые", callback_data="tracked")
+            InlineKeyboardButton(text="📱 Отслеживание", callback_data="track_item")
         ],
         [
-            InlineKeyboardButton(text="👤 Личный кабинет", callback_data="profile"),
-            InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="add_funds")
+            InlineKeyboardButton(text="📦 Отслеживаемые", callback_data="tracked"),
+            InlineKeyboardButton(text="👤 Личный кабинет", callback_data="profile")
         ],
         [
-            InlineKeyboardButton(text="📅 Подписка", callback_data="subscription"),
-            InlineKeyboardButton(text="📊 Статистика", callback_data="stats")
+            InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="add_funds"),
+            InlineKeyboardButton(text="📅 Подписка", callback_data="subscription")
         ],
         [
+            InlineKeyboardButton(text="📊 Статистика", callback_data="stats"),
             InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")
         ]
     ])
@@ -247,10 +250,14 @@ async def help_callback(callback_query: types.CallbackQuery):
         "*4. Поиск товаров:*\n"
         "   • Задайте параметры\n"
         "   • Найдите прибыльные позиции\n\n"
+        "*5. Анализ внешки:*\n"
+        "   • Введите название товара или артикул\n"
+        "   • Получите анализ внешней рекламы и блогеров\n\n"
         "*Стоимость операций:*\n"
         f"• Анализ товара: {COSTS['product_analysis']}₽\n"
         f"• Анализ тренда: {COSTS['trend_analysis']}₽\n"
         f"• Анализ ниши: {COSTS['niche_analysis']}₽\n"
+        f"• Анализ внешки: {COSTS['external_analysis']}₽\n"
         f"• Отслеживание: {COSTS['tracking']}₽"
     )
     await callback_query.message.edit_text(
@@ -279,25 +286,34 @@ async def profile_callback(callback_query: types.CallbackQuery):
         
         subscription_info = "❌ Нет активной подписки"
         if subscription_stats:
-            expiry_date = datetime.fromisoformat(subscription_stats['expiry_date'])
-            days_left = (expiry_date - datetime.now()).days
-            subscription_info = (
-                f"📅 *Текущая подписка:* {subscription}\n"
-                f"⏳ Осталось дней: {days_left}\n\n"
-                "*Лимиты:*\n"
-            )
+            # Проверяем, что дата окончания не None
+            if subscription_stats.get('expiry_date'):
+                expiry_date = datetime.fromisoformat(subscription_stats['expiry_date'])
+                days_left = (expiry_date - datetime.now()).days
+                subscription_info = (
+                    f"📅 *Текущая подписка:* {subscription}\\n"
+                    f"⏳ *Дней до окончания:* {days_left}\\n\\n"
+                    "*Лимиты:*\\n"
+                )
+            else:
+                subscription_info = (
+                    f"📅 *Текущая подписка:* {subscription}\\n"
+                    f"⏳ Без ограничения по времени\\n\\n"
+                    "*Лимиты:*\\n"
+                )
+            
             for action, data in subscription_stats['actions'].items():
                 # Безопасное отображение бесконечности
                 if data['limit'] == float('inf'):
                     limit_display = "∞"
                 else:
                     limit_display = str(data['limit'])
-                subscription_info += f"• {action}: {data['used']}/{limit_display}\n"
+                subscription_info += f"• {action}: {data['used']}/{limit_display}\\n"
         
         profile_text = (
-            f"👤 *Личный кабинет*\n\n"
-            f"💰 Баланс: {balance}₽\n"
-            f"📊 Отслеживаемых товаров: {len(tracked_items)}\n\n"
+            f"👤 *Личный кабинет*\\n\\n"
+            f"💰 Баланс: {balance}₽\\n"
+            f"📊 Отслеживаемых товаров: {len(tracked_items)}\\n\\n"
             f"{subscription_info}"
         )
         
@@ -339,7 +355,7 @@ async def profile_callback(callback_query: types.CallbackQuery):
 async def add_funds_callback(callback_query: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserStates.waiting_for_payment_amount)
     await callback_query.message.edit_text(
-        "💰 *Пополнение баланса*\n\n"
+        "💰 *Пополнение баланса*\\n\\n"
         "Введите сумму пополнения (минимум 100₽):",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=back_keyboard()
@@ -350,17 +366,17 @@ async def add_funds_callback(callback_query: types.CallbackQuery, state: FSMCont
 async def subscription_callback(callback_query: types.CallbackQuery):
     subscription_text = (
         "📅 *Доступные подписки:*\n\n"
-        f"*Basic:* {SUBSCRIPTION_COSTS['basic']}₽/мес\n"
-        "• 10 анализов товаров\n"
-        "• 5 анализов ниш\n"
-        "• Отслеживание 10 товаров\n\n"
-        f"*Pro:* {SUBSCRIPTION_COSTS['pro']}₽/мес\n"
-        "• 50 анализов товаров\n"
-        "• 20 анализов ниш\n"
-        "• Отслеживание 50 товаров\n\n"
-        f"*Business:* {SUBSCRIPTION_COSTS['business']}₽/мес\n"
-        "• Неограниченное количество анализов\n"
-        "• Отслеживание 200 товаров\n"
+        f"*Basic:* {SUBSCRIPTION_COSTS['basic']}₽/мес\\n"
+        "• 10 анализов товаров\\n"
+        "• 5 анализов ниш\\n"
+        "• Отслеживание 10 товаров\\n\\n"
+        f"*Pro:* {SUBSCRIPTION_COSTS['pro']}₽/мес\\n"
+        "• 50 анализов товаров\\n"
+        "• 20 анализов ниш\\n"
+        "• Отслеживание 50 товаров\\n\\n"
+        f"*Business:* {SUBSCRIPTION_COSTS['business']}₽/мес\\n"
+        "• Неограниченное количество анализов\\n"
+        "• Отслеживание 200 товаров\\n"
         "• Приоритетная поддержка"
     )
     
@@ -395,9 +411,9 @@ async def handle_subscription_selection(callback_query: types.CallbackQuery):
             subscription_manager.update_balance(user_id, -cost)
             
             await callback_query.message.edit_text(
-                f"✅ Подписка {subscription_type.capitalize()} успешно оформлена!\n\n"
-                f"Списано: {cost}₽\n"
-                f"Остаток на балансе: {balance - cost}₽\n\n"
+                f"✅ Подписка {subscription_type.capitalize()} успешно оформлена!\\n\\n"
+                f"Списано: {cost}₽\\n"
+                f"Остаток на балансе: {balance - cost}₽\\n\\n"
                 "Теперь вам доступны все функции выбранного тарифа.",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -407,9 +423,9 @@ async def handle_subscription_selection(callback_query: types.CallbackQuery):
         else:
             # Если недостаточно средств, предлагаем пополнить баланс
             await callback_query.message.edit_text(
-                f"❌ Недостаточно средств для оформления подписки {subscription_type.capitalize()}\n\n"
-                f"Стоимость: {cost}₽\n"
-                f"Ваш баланс: {balance}₽\n\n"
+                f"❌ Недостаточно средств для оформления подписки {subscription_type.capitalize()}\\n\\n"
+                f"Стоимость: {cost}₽\\n"
+                f"Ваш баланс: {balance}₽\\n\\n"
                 "Пожалуйста, пополните баланс для оформления подписки.",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -430,20 +446,30 @@ async def handle_subscription_selection(callback_query: types.CallbackQuery):
 
 @dp.callback_query(lambda c: c.data == 'brand_analysis')
 async def handle_brand_analysis(callback_query: types.CallbackQuery, state: FSMContext):
-    """Обрабатывает запрос на анализ бренда."""
-    user_id = callback_query.from_user.id
-    
-    # Проверяем подписку
-    can_perform = subscription_manager.can_perform_action(user_id, 'brand_analysis')
-    if not can_perform:
-        await callback_query.message.answer("⚠️ У вас нет активной подписки или закончился лимит запросов. Перейдите в раздел подписок для получения доступа.", reply_markup=main_menu_kb())
-        await callback_query.answer()
-        return
-    
-    # Переходим в состояние ожидания бренда
-    await state.set_state(UserStates.waiting_for_brand)
-    await callback_query.message.answer("Введите название бренда для анализа:", reply_markup=back_keyboard())
-    await callback_query.answer()
+    """Обработчик нажатия на кнопку Анализ бренда"""
+    try:
+        # Устанавливаем состояние ожидания ввода названия бренда
+        await state.set_state(UserStates.waiting_for_brand)
+        
+        # Отправляем сообщение с инструкцией
+        await callback_query.message.edit_text(
+            "🔍 *Анализ бренда*\n\n"
+            "Введите название бренда для анализа.\n\n"
+            "Например:\n"
+            "• Nike\n"
+            "• Adidas\n"
+            "• Zara",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=back_keyboard()
+        )
+    except Exception as e:
+        logger.error(f"Error in handle_brand_analysis: {str(e)}", exc_info=True)
+        await callback_query.message.edit_text(
+            "❌ *Произошла ошибка*\n\n"
+            "Пожалуйста, попробуйте позже или обратитесь в поддержку.",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=back_keyboard()
+        )
 
 @dp.message(lambda message: message.text and message.text.strip(), UserStates.waiting_for_brand)
 async def handle_brand_name(message: types.Message, state: FSMContext):
@@ -526,7 +552,7 @@ async def handle_brand_name(message: types.Message, state: FSMContext):
     except Exception as e:
         logger.error(f"Error in handle_brand_name: {str(e)}", exc_info=True)
         await message.answer(f"❌ Произошла ошибка при анализе бренда: {str(e)}", reply_markup=back_keyboard())
-        await state.clear() 
+        await state.clear()
 @dp.callback_query(lambda c: c.data == "product_search")
 async def handle_global_search(callback_query: types.CallbackQuery, state: FSMContext):
     try:
@@ -545,18 +571,18 @@ async def handle_global_search(callback_query: types.CallbackQuery, state: FSMCo
         await state.set_state(UserStates.waiting_for_search)
         
         await callback_query.message.edit_text(
-            "🌐 *Глобальный поиск и анализ рекламы*\n\n"
-            "Введите артикул товара или название для анализа.\n"
-            "Например: `176409037` или `Носки`\n\n"
-            "🔍 Анализ будет проведен с использованием базой данных:\n"
-            "• Данные о продажах товара\n"
-            "• Статистика рекламных кампаний\n"
-            "• Эффективность блогеров\n"
-            "• Прирост заказов и выручки после рекламы\n\n"
-            "📊 Вы получите подробный отчет с метриками:\n"
-            "• Суммарная частотность и выручка\n"
-            "• Прирост количества заказов\n"
-            "• Эффективность рекламных публикаций\n"
+            "🌐 *Глобальный поиск и анализ рекламы*\\n\\n"
+            "Введите артикул товара или название для анализа.\\n"
+            "Например: `176409037` или `Носки`\\n\\n"
+            "🔍 Анализ будет проведен с использованием базой данных:\\n"
+            "• Данные о продажах товара\\n"
+            "• Статистика рекламных кампаний\\n"
+            "• Эффективность блогеров\\n"
+            "• Прирост заказов и выручки после рекламы\\n\\n"
+            "📊 Вы получите подробный отчет с метриками:\\n"
+            "• Суммарная частотность и выручка\\n"
+            "• Прирост количества заказов\\n"
+            "• Эффективность рекламных публикаций\\n"
             "• Рекомендации по блогерам",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=back_keyboard()
@@ -597,10 +623,14 @@ async def help_handler(message: types.Message):
         "*4. Поиск товаров:*\n"
         "   • Задайте параметры\n"
         "   • Найдите прибыльные позиции\n\n"
+        "*5. Анализ внешки:*\n"
+        "   • Введите название товара или артикул\n"
+        "   • Получите анализ внешней рекламы и блогеров\n\n"
         "*Стоимость операций:*\n"
         f"• Анализ товара: {COSTS['product_analysis']}₽\n"
         f"• Анализ тренда: {COSTS['trend_analysis']}₽\n"
         f"• Анализ ниши: {COSTS['niche_analysis']}₽\n"
+        f"• Анализ внешки: {COSTS['external_analysis']}₽\n"
         f"• Отслеживание: {COSTS['tracking']}₽"
     )
     await message.answer(help_text, parse_mode=ParseMode.MARKDOWN)
@@ -612,11 +642,11 @@ async def balance_handler(message: types.Message):
     logger.info(f"User {user_id} checked balance: {balance}₽")
     
     balance_text = (
-        f"💰 *Ваш баланс:* {balance}₽\n\n"
-        "Пополнить баланс можно через:\n"
-        "• Банковскую карту\n"
-        "• Криптовалюту\n"
-        "• QIWI\n"
+        f"💰 *Ваш баланс:* {balance}₽\\n\\n"
+        "Пополнить баланс можно через:\\n"
+        "• Банковскую карту\\n"
+        "• Криптовалюту\\n"
+        "• QIWI\\n"
         "• ЮMoney"
     )
     
@@ -639,13 +669,22 @@ async def profile_handler(message: types.Message):
     # Форматируем информацию о подписке
     subscription_info = "❌ Нет активной подписки"
     if subscription_stats:
-        expiry_date = datetime.fromisoformat(subscription_stats['expiry_date'])
-        days_left = (expiry_date - datetime.now()).days
-        subscription_info = (
-            f"📅 *Текущая подписка:* {subscription}\n"
-            f"⏳ Осталось дней: {days_left}\n\n"
-            "*Лимиты:*\n"
-        )
+        # Проверяем, что дата окончания не None
+        if subscription_stats.get('expiry_date'):
+            expiry_date = datetime.fromisoformat(subscription_stats['expiry_date'])
+            days_left = (expiry_date - datetime.now()).days
+            subscription_info = (
+                f"📅 *Текущая подписка:* {subscription}\n"
+                f"⏳ Осталось дней: {days_left}\n\n"
+                "*Лимиты:*\n"
+            )
+        else:
+            subscription_info = (
+                f"📅 *Текущая подписка:* {subscription}\n"
+                f"⏳ Без ограничения по времени\n\n"
+                "*Лимиты:*\n"
+            )
+        
         for action, data in subscription_stats['actions'].items():
             limit = "∞" if data['limit'] == float('inf') else data['limit']
             subscription_info += f"• {action}: {data['used']}/{limit}\n"
@@ -1259,104 +1298,92 @@ async def get_wb_product_info(article):
         return None
 
 async def global_search_serper_detailed(query: str):
-    """Выполняет глобальный поиск через API serper.dev с анализом соцсетей."""
+    """Получение данных из глобального поиска через Serper API"""
     try:
         logger.info(f"Starting global search for query: {query}")
+        
+        # Формируем запрос к Serper API
         url = "https://google.serper.dev/search"
-        
-        payload = json.dumps({
-            "q": f"{query} site:vk.com OR site:instagram.com OR site:facebook.com OR site:twitter.com OR site:t.me",
-            "num": 20,
-            "gl": "ru",
-            "hl": "ru"
-        })
-        
         headers = {
-            'X-API-KEY': SERPER_API_KEY,
-            'Content-Type': 'application/json'
+            "X-API-KEY": SERPER_API_KEY,
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "q": f"{query} site:vk.com OR site:instagram.com OR site:facebook.com OR site:twitter.com OR site:t.me OR site:youtube.com",
+            "gl": "ru",
+            "hl": "ru",
+            "num": 10
         }
         
         logger.info("Making request to Serper API")
-        response = requests.post(url, headers=headers, data=payload, timeout=30)
-        logger.info(f"Serper API response status: {response.status_code}")
-        
-        if response.status_code != 200:
-            logger.error(f"Serper API error: {response.text}")
-            return {"error": "Ошибка при выполнении поиска", "results": []}
-            
-        search_data = response.json()
-        logger.info("Successfully received search data")
-        
-        if not search_data or 'organic' not in search_data:
-            logger.error("No organic results in search data")
-            return {"error": "Не найдено результатов поиска", "results": []}
-        
-        organic = search_data.get("organic", [])
-        filtered_results = []
-        
-        for item in organic:
-            try:
-                link = item.get("link", "")
-                if not link or "wildberries" in link.lower():
-                    continue
-                
-                domain = urlparse(link).netloc.lower()
-                if not any(social in domain for social in ["vk.com", "instagram.com", "t.me", "facebook.com", "twitter.com"]):
-                    continue
-                
-                # Получаем лайки и просмотры
-                snippet = item.get("snippet", "")
-                likes, views = get_real_likes_views(link, snippet)
-                
-                # Оцениваем влияние
-                approx_clients = int(likes * 0.1 + views * 0.05)
-                approx_revenue = approx_clients * 500
-                growth_percent = (approx_revenue / 10000) * 100 if approx_revenue > 0 else 0
-                
-                result = {
-                    "title": item.get("title", ""),
-                    "link": link,
-                    "snippet": snippet,
-                    "site": domain,
-                    "likes": likes,
-                    "views": views,
-                    "approx_clients": approx_clients,
-                    "approx_revenue": approx_revenue,
-                    "growth_percent": growth_percent
-                }
-                filtered_results.append(result)
-                logger.info(f"Added result: {domain}")
-            except Exception as item_error:
-                logger.error(f"Error processing search result item: {str(item_error)}")
-                continue
-        
-        if not filtered_results:
-            return {
-                "error": None,
-                "results": [],
-                "message": (
-                    "🔍 Анализ социальных сетей\n\n"
-                    "Мы провели поиск по следующим площадкам:\n"
-                    "• VK\n"
-                    "• Instagram\n"
-                    "• Telegram\n"
-                    "• Facebook\n"
-                    "• Twitter\n\n"
-                    "📊 Результаты анализа:\n"
-                    "Не обнаружено активного продвижения товара в социальных сетях. "
-                    "Это может означать:\n"
-                    "• Товар продвигается органически\n"
-                    "• Высокий уровень доверия аудитории\n"
-                    "• Стабильный спрос без агрессивной рекламы"
-                )
-            }
-        
-        logger.info(f"Search completed successfully, found {len(filtered_results)} results")
-        return {"error": None, "results": filtered_results}
-        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    logger.info("Successfully received search data")
+                    
+                    results = []
+                    processed_urls = set()
+                    
+                    # Обрабатываем результаты поиска
+                    for result in data.get('organic', []):
+                        url = result.get('link', '')
+                        if url and url not in processed_urls and 'wildberries.ru' not in url:
+                            processed_urls.add(url)
+                            
+                            # Определяем платформу
+                            platform = 'unknown'
+                            if 'instagram.com' in url:
+                                platform = 'instagram'
+                            elif 'vk.com' in url:
+                                platform = 'vk'
+                            elif 'youtube.com' in url:
+                                platform = 'youtube'
+                            elif 't.me' in url:
+                                platform = 'telegram'
+                            elif 'facebook.com' in url:
+                                platform = 'facebook'
+                            elif 'twitter.com' in url:
+                                platform = 'twitter'
+                            
+                            # Получаем статистику продаж
+                            sales_impact = {
+                                'frequency': result.get('frequency', 0),
+                                'revenue': result.get('revenue', 0),
+                                'orders': result.get('orders', 0),
+                                'avg_price': result.get('avg_price', 0),
+                                'orders_growth_percent': result.get('orders_growth_percent', 0),
+                                'revenue_growth_percent': result.get('revenue_growth_percent', 0)
+                            }
+                            
+                            # Получаем автора из сниппета или заголовка
+                            author = result.get('author', '')
+                            if not author:
+                                snippet = result.get('snippet', '')
+                                if 'by' in snippet.lower():
+                                    author = snippet.split('by')[-1].strip()
+                                else:
+                                    author = result.get('title', '').split('-')[0].strip()
+                            
+                            results.append({
+                                'platform': platform,
+                                'date': result.get('date', ''),
+                                'url': url,
+                                'author': author,
+                                'sales_impact': sales_impact
+                            })
+                            
+                            logger.info(f"Added result: {url}")
+                    
+                    logger.info(f"Search completed successfully, found {len(results)} results")
+                    return results
+                else:
+                    logger.error(f"Serper API error: {response.status}")
+                    return []
+                    
     except Exception as e:
-        logger.error(f"Error in global search: {str(e)}", exc_info=True)
-        return {"error": "Произошла ошибка при выполнении поиска", "results": []}
+        logger.error(f"Error in global search: {str(e)}")
+        return []
 
 def build_platform_distribution_chart(platforms, activities, title, filename_prefix):
     """Создает круговую диаграмму распределения активности по платформам."""
@@ -2520,7 +2547,7 @@ async def get_mpsta_data(query):
     date_to = today.strftime("%d.%m.%Y")
     
     headers = {
-        "X-Mpstats-TOKEN": MPSTA_API_KEY,
+        "X-Mpstats-TOKEN": MPSTATS_API_KEY,
         "Content-Type": "application/json"
     }
     
@@ -3631,22 +3658,6 @@ def format_mpsta_results(data):
                 pass
         return f"❌ Произошла ошибка при форматировании результатов: {str(e)}", []
 
-# Добавляем запуск проверки в main
-async def main():
-    logger.info("Starting bot...")
-    
-    # Запускаем проверку истекающих подписок
-    asyncio.create_task(check_expiring_subscriptions())
-    
-    # Запускаем мониторинг отслеживаемых товаров
-    asyncio.create_task(check_tracked_items())
-    
-    # Запускаем бота
-    try:
-        await dp.start_polling(bot)
-    finally:
-        await bot.session.close()
-
 async def check_tracked_items():
     """Периодическая проверка отслеживаемых товаров и отправка уведомлений."""
     logger.info("Starting tracked items monitoring...")
@@ -4145,283 +4156,58 @@ async def handle_delete_tracked_item(callback_query: types.CallbackQuery, state:
 
 async def get_mpstats_category_data(category_path, days=30):
     """Получение данных по категории с MPSTATS"""
-    logger.info(f"Getting category data for {category_path}")
-    
-    # Формируем даты для запроса (текущая дата и дата X дней назад)
-    end_date = datetime.now().strftime("%Y-%m-%d")
-    start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
-    
-    # URL-кодирование пути категории
-    encoded_path = requests.utils.quote(category_path)
-    
-    # Формируем URL запроса
-    url = f"https://mpstats.io/api/wb/get/category?d1={start_date}&d2={end_date}&path={encoded_path}"
-    
-    headers = {
-        "X-Mpstats-TOKEN": MPSTA_API_KEY,
-        "Content-Type": "application/json"
-    }
-    
     try:
+        # Получаем даты для запроса
+        end_date = datetime.now().strftime("%Y-%m-%d")
+        start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        
+        # Кодируем путь категории для URL
+        encoded_path = quote(category_path)
+        
+        # URL для запроса данных о категории
+        url = f"https://mpstats.io/api/wb/get/category"
+        
+        # Заголовки для запроса
+        headers = {
+            "X-Mpstats-TOKEN": MPSTATS_API_KEY,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0",
+            "Origin": "https://mpstats.io",
+            "Referer": "https://mpstats.io/",
+            "Authorization": f"Bearer {MPSTATS_API_KEY}"
+        }
+        
+        # Параметры запроса
+        params = {
+            "path": encoded_path,
+            "d1": start_date,
+            "d2": end_date,
+            "token": MPSTATS_API_KEY
+        }
+        
+        logger.info(f"Sending request to MPSTATS API: {url}")
+        logger.info(f"Request headers: {headers}")
+        logger.info(f"Request params: {params}")
+        
+        # Выполняем GET запрос к API
         async with aiohttp.ClientSession() as session:
-            logger.info(f"Sending request to MPSTATS API: {url}")
-            async with session.get(url, headers=headers) as response:
+            async with session.get(url, headers=headers, params=params) as response:
+                response_text = await response.text()
+                logger.info(f"Response status: {response.status}")
+                logger.info(f"Response headers: {response.headers}")
+                logger.info(f"Response body: {response_text}")
+                
                 if response.status == 200:
-                    data = await response.json()
-                    logger.info(f"Successfully got data for category {category_path}")
-                    
-                    # Проверяем, что данные не пустые и имеют правильную структуру
-                    if not data:
-                        logger.error(f"Empty data returned for category {category_path}")
-                        return None
-                    
-                    # Выводим структуру данных для отладки
-                    logger.info(f"Category API response structure: {list(data.keys())}")
-                    logger.info(f"Response data types: {[(k, type(v).__name__) for k, v in data.items()]}")
-                    
-                    # Пробуем различные способы получения ключевых данных
-                    if "topQueries" in data:
-                        logger.info("Found topQueries in data")
-                        keywords = data.get("topQueries", [])
-                    elif "queries" in data:
-                        logger.info("Found queries in data")
-                        keywords = data.get("queries", [])
-                    elif "keywords" in data:
-                        logger.info("Found keywords in data")
-                        keywords = data.get("keywords", [])
-                    elif "cards" in data:
-                        # Иногда API возвращает карточки товаров вместо ключевых слов
-                        logger.info("Found cards data, converting to keywords format")
-                        cards = data.get("cards", [])
-                        
-                        # Преобразуем карточки товаров в формат, похожий на ключевые слова
-                        keywords = []
-                        for card in cards[:30]:  # Ограничиваем 30 товарами
-                            if isinstance(card, dict):
-                                name = card.get("name", "")
-                                price = card.get("price", {}).get("RUB", 0)
-                                sales = card.get("sales", {}).get("items", 0)
-                                revenue = price * sales
-                                
-                                keywords.append({
-                                    "name": name,
-                                    "frequency": sales,
-                                    "revenue": revenue,
-                                    "avgCategoryRevenue": revenue * 1.2,  # Оценка среднего по категории
-                                    "dynamics": {
-                                        "frequency": {
-                                            "last30days": card.get("salesDynamics", {}).get("items", {}).get("percentage", 0),
-                                            "last60days": 0,
-                                            "last90days": 0
-                                        }
-                                    },
-                                    "monopoly": random.randint(10, 90),  # Случайное значение для демонстрации
-                                    "avgPrice": price,
-                                    "adPercent": random.randint(5, 50),  # Случайное значение для демонстрации
-                                    "rating": card.get("rating", 0)
-                                })
-                                
-                        # Сортируем по выручке
-                        keywords = sorted(keywords, key=lambda x: x.get("revenue", 0), reverse=True)
-                        logger.info(f"Converted {len(keywords)} cards to keywords format")
-                        
-                    elif "products" in data:
-                        # Еще один возможный формат данных с товарами
-                        logger.info("Found products data, converting to keywords format")
-                        products = data.get("products", [])
-                        
-                        # Преобразуем товары в формат ключевых слов
-                        keywords = []
-                        for product in products[:30]:
-                            if isinstance(product, dict):
-                                name = product.get("name", "")
-                                price = product.get("price", 0)
-                                sales = product.get("sales", 0)
-                                revenue = price * sales
-                                
-                                keywords.append({
-                                    "name": name,
-                                    "frequency": sales,
-                                    "revenue": revenue,
-                                    "avgCategoryRevenue": revenue * 1.2,
-                                    "dynamics": {
-                                        "frequency": {
-                                            "last30days": product.get("dynamics", 0),
-                                            "last60days": 0,
-                                            "last90days": 0
-                                        }
-                                    },
-                                    "monopoly": random.randint(10, 90),
-                                    "avgPrice": price,
-                                    "adPercent": random.randint(5, 50),
-                                    "rating": product.get("rating", 0)
-                                })
-                                
-                        keywords = sorted(keywords, key=lambda x: x.get("revenue", 0), reverse=True)
-                        logger.info(f"Converted {len(keywords)} products to keywords format")
-                    else:
-                        # Если не нашли ожидаемой структуры, пробуем создать мок-данные
-                        logger.warning(f"No expected structure found in API response. Creating mock data for {category_path}")
-                        
-                        # Извлекаем основную часть категории для генерации мок-данных
-                        category_name = category_path.split('/')[-1] if '/' in category_path else category_path
-                        
-                        # Генерируем мок-данные на основе категории
-                        keywords = []
-                        for i in range(10):
-                            keyword_name = f"{category_name} {['популярный', 'качественный', 'недорогой', 'брендовый', 'модный'][i % 5]} {i+1}"
-                            frequency = random.randint(1000, 10000)
-                            revenue = random.randint(100000, 1000000)
-                            
-                            keywords.append({
-                                "name": keyword_name,
-                                "frequency": frequency,
-                                "revenue": revenue,
-                                "avgCategoryRevenue": revenue * 1.5,
-                                "dynamics": {
-                                    "frequency": {
-                                        "last30days": random.randint(-20, 50),
-                                        "last60days": random.randint(-20, 50),
-                                        "last90days": random.randint(-20, 50)
-                                    }
-                                },
-                                "monopoly": random.randint(10, 90),
-                                "avgPrice": revenue / frequency if frequency > 0 else 1000,
-                                "adPercent": random.randint(5, 50),
-                                "rating": random.randint(30, 50) / 10
-                            })
-                            
-                        logger.info(f"Created {len(keywords)} mock keywords for display")
-                    
-                    # Возвращаем данные в ожидаемом формате
-                    result = {"topQueries": keywords} if keywords else None
-                    return result
-                    
+                    data = json.loads(response_text)
+                    logger.info(f"Successfully got category data for {category_path}")
+                    return data
                 else:
-                    error_text = await response.text()
-                    logger.error(f"Error getting category data: {response.status} - {error_text}")
-                    
-                    # Если ошибка связана с путем категории, пробуем получить топ запросы через другой эндпоинт
-                    try:
-                        # Используем эндпоинт trends для получения данных категории
-                        logger.info(f"Trying trends API endpoint for {category_path}")
-                        trends_url = f"https://mpstats.io/api/wb/get/category/trends?d1={start_date}&d2={end_date}&path={encoded_path}"
-                        
-                        async with session.get(trends_url, headers=headers) as trends_response:
-                            if trends_response.status == 200:
-                                trends_data = await trends_response.json()
-                                logger.info(f"Successfully got trends data for {category_path}")
-                                
-                                # Преобразуем данные трендов в формат ключевых слов
-                                if "category" in trends_data:
-                                    category_data = trends_data.get("category", {})
-                                    keywords = []
-                                    
-                                    # Создаем запись для каждой метрики категории
-                                    metrics = ["revenue", "sales", "items", "brands", "sellers"]
-                                    for metric in metrics:
-                                        if metric in category_data:
-                                            value = category_data.get(metric, 0)
-                                            name = f"{category_path} - {metric.capitalize()}"
-                                            
-                                            keywords.append({
-                                                "name": name,
-                                                "frequency": value if metric == "sales" else int(value / 100),
-                                                "revenue": value if metric == "revenue" else value * 1000,
-                                                "avgCategoryRevenue": value * 1.2 if metric == "revenue" else value * 1200,
-                                                "dynamics": {"frequency": {"last30days": 10, "last60days": 5, "last90days": 0}},
-                                                "monopoly": 30,
-                                                "avgPrice": 1000,
-                                                "adPercent": 20,
-                                                "rating": 4.5
-                                            })
-                                    
-                                    logger.info(f"Created {len(keywords)} keyword entries from trends data")
-                                    return {"topQueries": keywords}
-                            else:
-                                logger.error(f"Trends API request failed: {trends_response.status}")
-                    except Exception as trends_e:
-                        logger.error(f"Error getting trends data: {str(trends_e)}")
-                    
-                    # Используем поисковый запрос как последний вариант
-                    logger.info(f"Trying search query as fallback for {category_path}")
-                    
-                    # Извлекаем последнюю часть пути категории для поиска
-                    search_term = category_path.split('/')[-1] if '/' in category_path else category_path
-                    keywords_url = f"https://mpstats.io/api/wb/get/keywords/grouped?d1={start_date}&d2={end_date}&query={search_term}"
-                    
-                    try:
-                        async with session.get(keywords_url, headers=headers) as keywords_response:
-                            if keywords_response.status == 200:
-                                keywords_data = await keywords_response.json()
-                                logger.info(f"Successfully got keywords data for search term {search_term}")
-                                
-                                if "keywords" in keywords_data and keywords_data["keywords"]:
-                                    return {"topQueries": keywords_data["keywords"]}
-                                else:
-                                    logger.error(f"No keywords in search response for {search_term}")
-                            else:
-                                logger.error(f"Keywords search request failed: {keywords_response.status}")
-                    except Exception as kw_e:
-                        logger.error(f"Error in keywords search fallback: {str(kw_e)}")
-                    
-                    # Если все запросы API не удались, создаем мок-данные
-                    logger.warning(f"All API requests failed. Creating mock data for {category_path}")
-                    keywords = []
-                    
-                    for i in range(10):
-                        keyword_name = f"{search_term} {['популярный', 'качественный', 'недорогой', 'брендовый', 'модный'][i % 5]} {i+1}"
-                        frequency = random.randint(1000, 10000)
-                        revenue = random.randint(100000, 1000000)
-                        
-                        keywords.append({
-                            "name": keyword_name,
-                            "frequency": frequency,
-                            "revenue": revenue,
-                            "avgCategoryRevenue": revenue * 1.5,
-                            "dynamics": {
-                                "frequency": {
-                                    "last30days": random.randint(-20, 50),
-                                    "last60days": random.randint(-20, 50),
-                                    "last90days": random.randint(-20, 50)
-                                }
-                            },
-                            "monopoly": random.randint(10, 90),
-                            "avgPrice": revenue / frequency if frequency > 0 else 1000,
-                            "adPercent": random.randint(5, 50),
-                            "rating": random.randint(30, 50) / 10
-                        })
-                    
-                    logger.info(f"Created {len(keywords)} mock keywords as last resort")
-                    return {"topQueries": keywords}
+                    logger.error(f"Error getting category data: {response.status} - {response_text}")
+                    return {"error": f"Ошибка API: {response.status} - {response_text}"}
     except Exception as e:
         logger.error(f"Exception getting category data: {str(e)}")
-        
-        # В случае полного провала, возвращаем мок-данные для отображения
-        logger.warning(f"Creating emergency mock data for {category_path}")
-        keywords = []
-        category_name = category_path.split('/')[-1] if '/' in category_path else category_path
-        
-        for i in range(5):
-            keywords.append({
-                "name": f"{category_name} тип {i+1}",
-                "frequency": random.randint(1000, 5000),
-                "revenue": random.randint(100000, 500000),
-                "avgCategoryRevenue": random.randint(150000, 600000),
-                "dynamics": {
-                    "frequency": {
-                        "last30days": random.randint(-10, 30),
-                        "last60days": random.randint(-10, 30),
-                        "last90days": random.randint(-10, 30)
-                    }
-                },
-                "monopoly": random.randint(20, 80),
-                "avgPrice": random.randint(800, 5000),
-                "adPercent": random.randint(10, 40),
-                "rating": random.randint(35, 50) / 10
-            })
-        
-        return {"topQueries": keywords}
+        return {"error": f"Ошибка при получении данных: {str(e)}"}
 
 def analyze_mpstats_category_data(data):
     """Анализ данных по категории с MPSTATS"""
@@ -4513,674 +4299,6 @@ def analyze_mpstats_category_data(data):
     logger.info(f"Successfully analyzed {len(result)} keywords")
     return result
 
-# Обработчик ввода ниши
-@dp.message(lambda message: message.text and message.text.strip(), UserStates.waiting_for_niche)
-async def handle_niche_query(message: types.Message, state: FSMContext):
-    try:
-        user_id = message.from_user.id
-        query = message.text.strip()
-        
-        # Определяем тип запроса и извлекаем нужные данные
-        is_category = query.lower().startswith("категория:")
-        category_path = None
-        limit = 5  # По умолчанию анализируем 5 запросов
-        
-        # Проверяем формат запроса и извлекаем параметры
-        if is_category:
-            # Формат: "категория:путь:лимит"
-            parts = query.split(":")
-            if len(parts) >= 2:
-                query_type = "category"
-                category_path = parts[1].strip()
-                
-                # Проверяем, есть ли лимит
-                if len(parts) >= 3:
-                    try:
-                        limit_str = parts[2].strip()
-                        limit = int(limit_str)
-                        # Ограничиваем лимит от 1 до 5
-                        limit = max(1, min(5, limit))
-                    except:
-                        pass
-            else:
-                await message.answer(
-                    "❌ Некорректный формат запроса для категории.\n"
-                    "Используйте формат: `категория:путь:лимит`\n"
-                    "Например: `категория:Женщинам/Одежда:3`",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=back_keyboard()
-                )
-                return
-        else:
-            # Проверяем, является ли запрос категорией на основе текста
-            detected_category_path = get_category_path(query)
-            
-            if detected_category_path:
-                # Запрос определен как категория
-                query_type = "category"
-                category_path = detected_category_path
-                
-                # Проверяем, есть ли лимит в формате "запрос:лимит"
-                if ":" in query:
-                    parts = query.split(":")
-                    try:
-                        limit_str = parts[1].strip()
-                        limit = int(limit_str)
-                        # Ограничиваем лимит от 1 до 5
-                        limit = max(1, min(5, limit))
-                    except:
-                        pass
-            else:
-                # Формат: "запрос:лимит"
-                query_type = "keyword"
-                if ":" in query:
-                    parts = query.split(":")
-                    query = parts[0].strip()
-                    try:
-                        limit_str = parts[1].strip()
-                        limit = int(limit_str)
-                        # Ограничиваем лимит от 1 до 5
-                        limit = max(1, min(5, limit))
-                    except:
-                        pass
-        
-        # Отправляем сообщение о начале анализа
-        processing_message = await message.answer(
-            "🔍 *Анализ ниши начат*\n\n"
-            f"{'Категория: ' if query_type == 'category' else 'Запрос: '}`{category_path if query_type == 'category' else query}`\n"
-            f"Количество анализируемых запросов: {limit}\n\n"
-            "Это может занять некоторое время. Пожалуйста, подождите...",
-            parse_mode=ParseMode.MARKDOWN
-        )
-        
-        # Отправляем индикатор набора текста, чтобы пользователь видел, что бот занят
-        await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
-        
-        # Получаем данные в зависимости от типа запроса
-        analyzed_data = None
-        
-        if query_type == "category":
-            # Получаем и анализируем данные категории
-            category_data = await get_mpstats_category_data(category_path)
-            if category_data:
-                analyzed_data = analyze_mpstats_category_data(category_data)
-                display_query = f"Категория: {category_path}"
-            else:
-                await processing_message.edit_text(
-                    "❌ *Не удалось получить данные по категории*\n\n"
-                    f"По категории `{category_path}` не найдено информации. Проверьте правильность пути категории.",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=back_keyboard()
-                )
-                return
-        else:
-            # Получаем и анализируем данные по ключевым словам
-            keyword_data = await get_mpstats_keyword_data(query, limit=limit)
-            if keyword_data and len(keyword_data) > 0:
-                analyzed_data = analyze_mpstats_keywords_data(keyword_data)
-                display_query = query
-            else:
-                # Если не удалось получить данные по ключевым словам, пробуем получить данные по запросу как по категории
-                category_data = await get_mpstats_category_data(query)
-                if category_data:
-                    analyzed_data = analyze_mpstats_category_data(category_data)
-                    display_query = f"Категория: {query}"
-                else:
-                    await processing_message.edit_text(
-                        "❌ *Не удалось получить данные*\n\n"
-                        f"По запросу `{query}` не найдено информации. Попробуйте другой запрос или категорию.",
-                        parse_mode=ParseMode.MARKDOWN,
-                        reply_markup=back_keyboard()
-                    )
-                    return
-        
-        if not analyzed_data:
-            await processing_message.edit_text(
-                "❌ *Ошибка анализа данных*\n\n"
-                "Произошла ошибка при анализе полученных данных. Пожалуйста, попробуйте позже.",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=back_keyboard()
-            )
-            return
-        
-        # Ограничиваем количество запросов для анализа
-        analyzed_data = analyzed_data[:limit]
-        
-        # Форматируем текстовый отчет
-        formatted_result = format_mpstats_niche_results(analyzed_data, display_query)
-        
-        # Строим графики
-        charts = build_niche_analysis_charts(analyzed_data, display_query, limit=limit)
-        
-        # Отправляем текстовый отчет
-        await processing_message.edit_text(
-            formatted_result,
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=back_keyboard()
-        )
-        
-        # Отправляем графики
-        if charts:
-            media_group = []
-            
-            # График частотности и выручки
-            if "frequency_revenue_chart" in charts:
-                media_group.append(InputMediaPhoto(
-                    media=FSInputFile(charts["frequency_revenue_chart"]),
-                    caption="Частотность и выручка по ключевым запросам"
-                ))
-            
-            # График динамики
-            if "dynamics_chart" in charts:
-                media_group.append(InputMediaPhoto(
-                    media=FSInputFile(charts["dynamics_chart"]),
-                    caption="Динамика запросов за 30/60/90 дней"
-                ))
-            
-            # График монополии и конкуренции
-            if "monopoly_chart" in charts:
-                media_group.append(InputMediaPhoto(
-                    media=FSInputFile(charts["monopoly_chart"]),
-                    caption="Монополия, упущенная выручка и процент рекламы"
-                ))
-            
-            if media_group:
-                await message.answer_media_group(media_group)
-        
-        # Очищаем состояние
-        await state.clear()
-        
-    except Exception as e:
-        logger.error(f"Error processing niche query: {str(e)}")
-        await message.answer(
-            "❌ Произошла ошибка при анализе ниши. Пожалуйста, попробуйте позже.",
-            reply_markup=main_menu_kb()
-        )
-        await state.clear()
-
-async def get_mpstats_keyword_data(query, limit=5):
-    """Получение данных по ключевым словам с MPSTATS"""
-    logger.info(f"Getting keyword data for query: {query}")
-    
-    # Формируем даты для запроса (текущая дата и дата 30 дней назад)
-    end_date = datetime.now().strftime("%Y-%m-%d")
-    start_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
-    
-    # URL-кодирование запроса
-    encoded_query = requests.utils.quote(query)
-    
-    # Формируем URL запроса с исправленным эндпоинтом для получения ключевых слов
-    url = f"https://mpstats.io/api/wb/get/keywords/grouped?d1={start_date}&d2={end_date}&query={encoded_query}"
-    
-    headers = {
-        "X-Mpstats-TOKEN": MPSTA_API_KEY,
-        "Content-Type": "application/json"
-    }
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    logger.info(f"Successfully got data for query: {query}")
-                    
-                    # Сортируем результаты по частотности и выбираем top N
-                    if "keywords" in data:
-                        sorted_queries = sorted(data["keywords"], key=lambda x: x.get("frequency", 0), reverse=True)
-                        return sorted_queries[:limit]
-                    else:
-                        logger.warning(f"No keywords data in response for query: {query}")
-                    return []
-                else:
-                    error_text = await response.text()
-                    logger.error(f"Error getting keyword data: {response.status} - {error_text}")
-                    return []
-    except Exception as e:
-        logger.error(f"Exception getting keyword data: {str(e)}")
-        return []
-
-# Словарь соответствия популярных категорий
-def get_category_path(text):
-    """Определяет путь категории по тексту пользователя"""
-    
-    # Словарь соответствия текстовых описаний категорий и их путей в Wildberries
-    category_mapping = {
-        # Женская одежда
-        "женская одежда": "Женщинам/Одежда",
-        "женские платья": "Женщинам/Одежда/Платья",
-        "женские блузки": "Женщинам/Одежда/Блузки и рубашки",
-        "женские футболки": "Женщинам/Одежда/Футболки и топы",
-        "женские джинсы": "Женщинам/Одежда/Джинсы",
-        "женские брюки": "Женщинам/Одежда/Брюки и шорты",
-        "женское белье": "Женщинам/Одежда/Белье",
-        "женские купальники": "Женщинам/Одежда/Купальники",
-        
-        # Женская обувь
-        "женская обувь": "Женщинам/Обувь",
-        "женские кроссовки": "Женщинам/Обувь/Кроссовки и кеды",
-        "женские туфли": "Женщинам/Обувь/Туфли",
-        "женские сапоги": "Женщинам/Обувь/Сапоги",
-        "женские ботинки": "Женщинам/Обувь/Ботинки",
-        
-        # Женские аксессуары
-        "женские аксессуары": "Женщинам/Аксессуары",
-        "женские сумки": "Женщинам/Аксессуары/Сумки",
-        "женские украшения": "Женщинам/Аксессуары/Украшения",
-        
-        # Мужская одежда
-        "мужская одежда": "Мужчинам/Одежда",
-        "мужские футболки": "Мужчинам/Одежда/Футболки и майки",
-        "мужские рубашки": "Мужчинам/Одежда/Рубашки",
-        "мужские джинсы": "Мужчинам/Одежда/Джинсы",
-        "мужские брюки": "Мужчинам/Одежда/Брюки и шорты",
-        "мужское белье": "Мужчинам/Одежда/Белье и плавки",
-        
-        # Мужская обувь
-        "мужская обувь": "Мужчинам/Обувь",
-        "мужские кроссовки": "Мужчинам/Обувь/Кроссовки и кеды",
-        "мужские туфли": "Мужчинам/Обувь/Туфли",
-        "мужские ботинки": "Мужчинам/Обувь/Ботинки",
-        
-        # Детская одежда
-        "детская одежда": "Детям/Одежда",
-        "одежда для мальчиков": "Детям/Мальчикам/Одежда",
-        "одежда для девочек": "Детям/Девочкам/Одежда",
-        
-        # Детская обувь
-        "детская обувь": "Детям/Обувь",
-        "обувь для мальчиков": "Детям/Мальчикам/Обувь",
-        "обувь для девочек": "Детям/Девочкам/Обувь",
-        
-        # Товары для дома
-        "товары для дома": "Дом/Интерьер",
-        "постельное белье": "Дом/Текстиль/Постельное белье",
-        "полотенца": "Дом/Текстиль/Полотенца",
-        "шторы": "Дом/Интерьер/Шторы",
-        "посуда": "Дом/Кухня/Посуда",
-        
-        # Электроника
-        "электроника": "Электроника",
-        "смартфоны": "Электроника/Смартфоны и телефоны",
-        "телевизоры": "Электроника/Телевизоры",
-        "ноутбуки": "Электроника/Ноутбуки",
-        "наушники": "Электроника/Аксессуары/Наушники",
-        
-        # Красота и здоровье
-        "красота": "Красота/Макияж",
-        "косметика": "Красота/Макияж",
-        "парфюмерия": "Красота/Парфюмерия",
-        "уход за кожей": "Красота/Уход за кожей",
-        "уход за волосами": "Красота/Уход за волосами",
-        
-        # Спорт
-        "спорт": "Спорт/Одежда",
-        "спортивная одежда": "Спорт/Одежда",
-        "спортивная обувь": "Спорт/Обувь",
-        "спортивные аксессуары": "Спорт/Аксессуары",
-        "тренажеры": "Спорт/Тренажеры",
-        
-        # Игрушки
-        "игрушки": "Детям/Игрушки",
-        "конструкторы": "Детям/Игрушки/Конструкторы",
-        "куклы": "Детям/Игрушки/Куклы",
-        "мягкие игрушки": "Детям/Игрушки/Мягкие игрушки",
-    }
-    
-    # Нормализуем текст запроса (приводим к нижнему регистру)
-    normalized_text = text.lower().strip()
-    
-    # Пытаемся найти прямое соответствие
-    if normalized_text in category_mapping:
-        return category_mapping[normalized_text]
-    
-    # Если прямого соответствия нет, ищем частичное совпадение
-    for key, path in category_mapping.items():
-        if key in normalized_text or normalized_text in key:
-            return path
-    
-    # Если соответствия не найдено, возвращаем None
-    return None
-
-def analyze_mpstats_keywords_data(keywords_data):
-    """Анализ данных по ключевым словам с MPSTATS"""
-    if not keywords_data or not isinstance(keywords_data, list):
-        return None
-    
-    result = []
-    
-    for keyword_data in keywords_data:
-        keyword = keyword_data.get("name", "")
-        
-        # Собираем метрики
-        frequency_30 = keyword_data.get("frequency", 0)
-        revenue_30 = keyword_data.get("revenue", 0)
-        revenue_avg_30 = keyword_data.get("avgCategoryRevenue", 0)
-        revenue_lost_percent = 0
-        if revenue_30 > 0 and revenue_avg_30 > 0:
-            revenue_lost_percent = max(0, min(100, (1 - revenue_30 / revenue_avg_30) * 100))
-        
-        # Динамика
-        dynamics_30 = keyword_data.get("dynamics", {}).get("frequency", {}).get("last30days", 0)
-        dynamics_60 = keyword_data.get("dynamics", {}).get("frequency", {}).get("last60days", 0)
-        dynamics_90 = keyword_data.get("dynamics", {}).get("frequency", {}).get("last90days", 0)
-        
-        # Дополнительные метрики
-        monopoly = keyword_data.get("monopoly", 0)
-        avg_price = keyword_data.get("avgPrice", 0)
-        ad_percent = keyword_data.get("adPercent", 0)
-        rating = keyword_data.get("rating", 0)
-        
-        # Формируем результат
-        result.append({
-            "keyword": keyword,
-            "rating": rating,
-            "frequency_30": frequency_30,
-            "dynamics_30": dynamics_30,
-            "dynamics_60": dynamics_60,
-            "dynamics_90": dynamics_90,
-            "revenue_30": revenue_30,
-            "revenue_avg_30": revenue_avg_30,
-            "revenue_lost_percent": revenue_lost_percent,
-            "monopoly": monopoly,
-            "avg_price": avg_price,
-            "ad_percent": ad_percent
-        })
-    
-    return result
-
-def format_mpstats_niche_results(data, query_display):
-    """Форматирует результаты анализа ниши для отображения пользователю"""
-    if not data:
-        return "❌ *Ошибка анализа*\n\nНе удалось проанализировать данные."
-    
-    result = f"📊 *Анализ ниши: {query_display}*\n\n"
-    
-    # Общая сводка
-    total_frequency = sum(item.get("frequency_30", 0) for item in data)
-    total_revenue = sum(item.get("revenue_30", 0) for item in data)
-    avg_monopoly = sum(item.get("monopoly", 0) for item in data) / len(data) if data else 0
-    avg_ad_percent = sum(item.get("ad_percent", 0) for item in data) / len(data) if data else 0
-    
-    result += f"📈 *Общая сводка:*\n"
-    result += f"• Общая частотность: {total_frequency:,} запросов\n".replace(',', ' ')
-    result += f"• Общая выручка: {total_revenue:,} ₽\n".replace(',', ' ')
-    result += f"• Средний индекс монополии: {avg_monopoly:.2f}%\n"
-    result += f"• Средний % рекламы: {avg_ad_percent:.2f}%\n\n"
-    
-    # Анализ по каждому ключевому запросу
-    result += "🔍 *Анализ ключевых запросов:*\n\n"
-    
-    for i, item in enumerate(data):
-        keyword = item.get("keyword", "")
-        frequency = item.get("frequency_30", 0)
-        revenue = item.get("revenue_30", 0)
-        dynamics_30 = item.get("dynamics_30", 0)
-        monopoly = item.get("monopoly", 0)
-        avg_price = item.get("avg_price", 0)
-        ad_percent = item.get("ad_percent", 0)
-        lost_percent = item.get("revenue_lost_percent", 0)
-        
-        result += f"{i+1}. *{keyword}*\n"
-        result += f"• Частотность: {frequency:,} запросов\n".replace(',', ' ')
-        result += f"• Выручка: {revenue:,} ₽\n".replace(',', ' ')
-        result += f"• Динамика (30 дней): {'+' if dynamics_30 >= 0 else ''}{dynamics_30:.2f}%\n"
-        result += f"• Индекс монополии: {monopoly:.2f}%\n"
-        result += f"• Средняя цена: {avg_price:,} ₽\n".replace(',', ' ')
-        result += f"• Доля рекламы: {ad_percent:.2f}%\n"
-        result += f"• Упущенная выручка: {lost_percent:.2f}%\n\n"
-    
-    # Рекомендации
-    result += "💡 *Рекомендации:*\n\n"
-    
-    if avg_monopoly < 30:
-        result += "• Низкий индекс монополии - хорошее поле для новых игроков\n"
-    elif avg_monopoly > 70:
-        result += "• Высокий индекс монополии - рынок контролируется несколькими продавцами\n"
-    
-    if avg_ad_percent < 20:
-        result += "• Низкая доля рекламы - возможность получить преимущество через рекламу\n"
-    elif avg_ad_percent > 50:
-        result += "• Высокая доля рекламы - высокая конкуренция за рекламные места\n"
-    
-    # Определяем тренды
-    positive_trends = sum(1 for item in data if item.get("dynamics_30", 0) > 0)
-    trend_ratio = positive_trends / len(data) if data else 0
-    
-    if trend_ratio > 0.7:
-        result += "• Растущая ниша - большинство запросов показывают положительную динамику\n"
-    elif trend_ratio < 0.3:
-        result += "• Падающая ниша - большинство запросов показывают отрицательную динамику\n"
-    else:
-        result += "• Стабильная ниша - запросы показывают смешанную динамику\n"
-    
-    return result
-
-def build_niche_analysis_charts(data, query_display, limit=5):
-    """Создает графики для визуализации анализа ниши"""
-    if not data:
-        logger.error("Attempt to build charts with empty data")
-        return None
-    
-    try:
-        import matplotlib.pyplot as plt
-        import numpy as np
-        import tempfile
-        import random
-        
-        # Ограничиваем данные для графиков
-        data = data[:limit]
-        logger.info(f"Building charts for {len(data)} items, query: {query_display}")
-        
-        # Создаем временные файлы для графиков
-        charts = {}
-        
-        # Проверяем наличие необходимых полей
-        for item in data:
-            required_fields = ["keyword", "frequency_30", "revenue_30", "dynamics_30", 
-                              "dynamics_60", "dynamics_90", "monopoly", "ad_percent", 
-                              "revenue_lost_percent"]
-            
-            missing_fields = [field for field in required_fields if field not in item or item[field] is None]
-            if missing_fields:
-                logger.warning(f"Item missing fields: {missing_fields}, filling with zeros")
-                for field in missing_fields:
-                    item[field] = 0
-        
-        # Подготовка данных
-        keywords = [item.get("keyword", "")[:15] + "..." if len(item.get("keyword", "")) > 15 else item.get("keyword", "") for item in data]
-        frequencies = [item.get("frequency_30", 0) for item in data]
-        revenues = [item.get("revenue_30", 0) / 1000 for item in data]  # в тысячах рублей
-        dynamics_30 = [item.get("dynamics_30", 0) for item in data]
-        dynamics_60 = [item.get("dynamics_60", 0) for item in data]
-        dynamics_90 = [item.get("dynamics_90", 0) for item in data]
-        monopolies = [item.get("monopoly", 0) for item in data]
-        ad_percents = [item.get("ad_percent", 0) for item in data]
-        lost_percents = [item.get("revenue_lost_percent", 0) for item in data]
-        
-        logger.debug(f"Chart data - keywords: {keywords}")
-        logger.debug(f"Chart data - frequencies: {frequencies}")
-        logger.debug(f"Chart data - revenues: {revenues}")
-        
-        # Защита от пустых данных
-        if not keywords or len(keywords) == 0:
-            logger.error("No keywords data for charts")
-            return None
-            
-        if all(f == 0 for f in frequencies) and all(r == 0 for r in revenues):
-            logger.error("All frequencies and revenues are zero")
-            # Генерируем фиктивные данные для демонстрационных целей
-            frequencies = [random.randint(100, 1000) for _ in range(len(keywords))]
-            revenues = [random.randint(10, 100) for _ in range(len(keywords))]
-            logger.warning("Using randomly generated data for charts")
-        
-        # 1. График частотности и выручки
-        try:
-            logger.info("Building frequency/revenue chart")
-            plt.figure(figsize=(12, 6))
-            
-            x = np.arange(len(keywords))
-            width = 0.35
-            
-            fig, ax1 = plt.subplots(figsize=(12, 6))
-            
-            # Графики частотности (столбики)
-            bars1 = ax1.bar(x - width/2, frequencies, width, color='#4e79a7', label='Частотность')
-            
-            # Подписи над столбиками
-            for i, v in enumerate(frequencies):
-                ax1.text(i - width/2, v + max(frequencies)*0.03 if max(frequencies) > 0 else v + 1, 
-                        f'{int(v):,}'.replace(',', ' '), 
-                        ha='center', va='bottom', fontsize=8, color='#4e79a7')
-            
-            ax1.set_xlabel('Ключевые запросы')
-            ax1.set_ylabel('Частотность запросов', color='#4e79a7')
-            ax1.tick_params(axis='y', labelcolor='#4e79a7')
-            
-            # Вторая ось Y для выручки
-            ax2 = ax1.twinx()
-            
-            # График выручки (линия)
-            line2 = ax2.plot(x, revenues, color='#f28e2b', marker='o', linestyle='-', linewidth=2, label='Выручка (тыс.₽)')
-            
-            # Подписи для точек выручки
-            for i, v in enumerate(revenues):
-                ax2.text(i, v + max(revenues)*0.03 if max(revenues) > 0 else v + 0.1, 
-                        f'{int(v*1000):,}'.replace(',', ' '), 
-                        ha='center', va='bottom', fontsize=8, color='#f28e2b')
-            
-            ax2.set_ylabel('Выручка (тыс.₽)', color='#f28e2b')
-            ax2.tick_params(axis='y', labelcolor='#f28e2b')
-            
-            # Настройка оси X
-            plt.xticks(x, keywords, rotation=45, ha='right')
-            
-            # Заголовок и легенда
-            plt.title(f'Частотность и выручка по запросам: {query_display}')
-            
-            # Объединяем легенды с обеих осей
-            handles1, labels1 = ax1.get_legend_handles_labels()
-            handles2, labels2 = ax2.get_legend_handles_labels()
-            ax1.legend(handles1 + handles2, labels1 + labels2, loc='upper left')
-            
-            plt.tight_layout()
-            
-            # Сохраняем график
-            freq_revenue_chart = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
-            plt.savefig(freq_revenue_chart.name)
-            plt.close()
-            
-            charts["frequency_revenue_chart"] = freq_revenue_chart.name
-            logger.info(f"Frequency/revenue chart created: {freq_revenue_chart.name}")
-        except Exception as e:
-            logger.error(f"Error creating frequency/revenue chart: {str(e)}")
-        
-        # 2. График динамики
-        try:
-            logger.info("Building dynamics chart")
-            plt.figure(figsize=(12, 6))
-            
-            x = np.arange(len(keywords))
-            width = 0.25
-            
-            fig, ax = plt.subplots(figsize=(12, 6))
-            
-            # Графики динамики за разные периоды
-            bars1 = ax.bar(x - width, dynamics_30, width, color='#4e79a7', label='30 дней')
-            bars2 = ax.bar(x, dynamics_60, width, color='#f28e2b', label='60 дней')
-            bars3 = ax.bar(x + width, dynamics_90, width, color='#e15759', label='90 дней')
-            
-            # Добавляем горизонтальную линию на 0
-            ax.axhline(y=0, color='black', linestyle='-', alpha=0.3)
-            
-            # Настройка графика
-            ax.set_xlabel('Ключевые запросы')
-            ax.set_ylabel('Динамика (%)')
-            ax.set_title(f'Динамика частотности запросов за разные периоды: {query_display}')
-            ax.set_xticks(x)
-            ax.set_xticklabels(keywords, rotation=45, ha='right')
-            ax.legend()
-            
-            # Добавляем значения над столбиками
-            for i, v in enumerate(dynamics_30):
-                if abs(v) > 0.1:  # Показываем только значимые изменения
-                    ax.text(i - width, v + (5 if v >= 0 else -15), f'{v:.1f}%', 
-                            ha='center', va='bottom' if v >= 0 else 'top', fontsize=8, color='#4e79a7')
-                
-            for i, v in enumerate(dynamics_60):
-                if abs(v) > 0.1:
-                    ax.text(i, v + (5 if v >= 0 else -15), f'{v:.1f}%', 
-                            ha='center', va='bottom' if v >= 0 else 'top', fontsize=8, color='#f28e2b')
-                
-            for i, v in enumerate(dynamics_90):
-                if abs(v) > 0.1:
-                    ax.text(i + width, v + (5 if v >= 0 else -15), f'{v:.1f}%', 
-                            ha='center', va='bottom' if v >= 0 else 'top', fontsize=8, color='#e15759')
-            
-            plt.tight_layout()
-            
-            # Сохраняем график
-            dynamics_chart = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
-            plt.savefig(dynamics_chart.name)
-            plt.close()
-            
-            charts["dynamics_chart"] = dynamics_chart.name
-            logger.info(f"Dynamics chart created: {dynamics_chart.name}")
-        except Exception as e:
-            logger.error(f"Error creating dynamics chart: {str(e)}")
-        
-        # 3. График монополии, упущенной выручки и процента рекламы
-        try:
-            logger.info("Building monopoly chart")
-            plt.figure(figsize=(12, 6))
-            
-            x = np.arange(len(keywords))
-            width = 0.25
-            
-            fig, ax = plt.subplots(figsize=(12, 6))
-            
-            # Графики показателей
-            bars1 = ax.bar(x - width, monopolies, width, color='#4e79a7', label='Индекс монополии (%)')
-            bars2 = ax.bar(x, lost_percents, width, color='#f28e2b', label='Упущенная выручка (%)')
-            bars3 = ax.bar(x + width, ad_percents, width, color='#e15759', label='Доля рекламы (%)')
-            
-            # Настройка графика
-            ax.set_xlabel('Ключевые запросы')
-            ax.set_ylabel('Процент (%)')
-            ax.set_title(f'Показатели конкуренции по запросам: {query_display}')
-            ax.set_xticks(x)
-            ax.set_xticklabels(keywords, rotation=45, ha='right')
-            ax.legend()
-            
-            # Добавляем значения над столбиками
-            for i, v in enumerate(monopolies):
-                if abs(v) > 0.1:
-                    ax.text(i - width, v + 3, f'{v:.1f}%', ha='center', fontsize=8, color='#4e79a7')
-                
-            for i, v in enumerate(lost_percents):
-                if abs(v) > 0.1:
-                    ax.text(i, v + 3, f'{v:.1f}%', ha='center', fontsize=8, color='#f28e2b')
-                
-            for i, v in enumerate(ad_percents):
-                if abs(v) > 0.1:
-                    ax.text(i + width, v + 3, f'{v:.1f}%', ha='center', fontsize=8, color='#e15759')
-            
-            plt.tight_layout()
-            
-            # Сохраняем график
-            monopoly_chart = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
-            plt.savefig(monopoly_chart.name)
-            plt.close()
-            
-            charts["monopoly_chart"] = monopoly_chart.name
-            logger.info(f"Monopoly chart created: {monopoly_chart.name}")
-        except Exception as e:
-            logger.error(f"Error creating monopoly chart: {str(e)}")
-        
-        return charts
-    except Exception as e:
-        logger.error(f"Error in build_niche_analysis_charts: {str(e)}")
-        return None
-
 @dp.callback_query(lambda c: c.data == "stats")
 async def stats_callback(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
@@ -5262,41 +4380,252 @@ async def stats_callback(callback_query: types.CallbackQuery):
             logger.error(f"Failed to send error message: {str(text_error)}")
             await callback_query.answer("Ошибка загрузки статистики. Попробуйте перезапустить бота командой /start", show_alert=True)
 
-async def show_profile(message: types.Message):
+# Добавляем функцию main
+async def main():
+    logger.info("Starting bot...")
+    
+    # Запускаем проверку истекающих подписок
+    asyncio.create_task(check_expiring_subscriptions())
+    
+    # Запускаем мониторинг отслеживаемых товаров
+    asyncio.create_task(check_tracked_items())
+    
+    # Запускаем бота
     try:
-        user_id = message.from_user.id
-        balance = subscription_manager.get_balance(user_id)
-        subscription = subscription_manager.get_subscription(user_id)
-        stats = subscription_manager.get_subscription_stats(user_id)
-        
-        # Безопасное получение значений статистики
-        product_analysis = stats.get('actions', {}).get('product_analysis', {'used': 0, 'limit': '∞'})
-        niche_analysis = stats.get('actions', {}).get('niche_analysis', {'used': 0, 'limit': '∞'})
-        tracking_items = stats.get('actions', {}).get('tracking_items', {'used': 0, 'limit': 200})
-        
-        # Форматируем сообщение с использованием HTML
-        profile_text = (
-            f"👤 <b>Профиль</b>\n\n"
-            f"💰 Баланс: {balance}₽\n"
-            f"📱 Подписка: {subscription['type'].title()}\n"
-            f"📅 Действует до: {subscription['expiry_date']}\n\n"
-            f"📊 <b>Статистика использования:</b>\n"
-            f"• Анализ товаров: {product_analysis['used']}/{product_analysis['limit']}\n"
-            f"• Анализ ниш: {niche_analysis['used']}/{niche_analysis['limit']}\n"
-            f"• Отслеживаемые товары: {tracking_items['used']}/{tracking_items['limit']}"
-        )
-        
-        await message.answer(
-            profile_text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=main_menu_kb()
-        )
+        await dp.start_polling(bot)
+    finally:
+        await bot.session.close()
+
+async def get_external_ads_data(query):
+    """Получение данных о внешней рекламе через комбинацию API"""
+    results = {
+        "article": query,
+        "product_info": None,
+        "recent_posts": []
+    }
+    
+    # 1. Получаем информацию о товаре через существующий метод
+    try:
+        wb_data = await get_wb_product_info(query)
+        if wb_data:
+            results["product_info"] = wb_data
+            logger.info("Successfully got data from Wildberries API")
     except Exception as e:
-        logger.error(f"Error showing profile: {str(e)}")
-        await message.answer(
-            "❌ Произошла ошибка при отображении профиля. Пожалуйста, попробуйте позже.",
-            reply_markup=main_menu_kb()
+        logger.error(f"Error getting Wildberries data: {str(e)}")
+    
+    # 2. Получаем данные из глобального поиска
+    try:
+        search_results = await global_search_serper_detailed(query)
+        if search_results:
+            logger.info("Successfully got data from global search")
+            results["recent_posts"].extend(search_results)
+    except Exception as e:
+        logger.error(f"Error getting global search data: {str(e)}")
+    
+    # 3. Получаем данные из MPSTATS
+    try:
+        mpstats_data = await get_mpsta_data(query)
+        if mpstats_data and isinstance(mpstats_data, dict):
+            logger.info("Successfully got data from MPSTATS")
+            
+            # Обрабатываем данные MPSTATS
+            for post in mpstats_data.get('posts', []):
+                if len(results['recent_posts']) < 5:
+                    # Получаем статистику продаж за 3 дня после публикации
+                    sales_impact = {
+                        'frequency': post.get('frequency', 0),
+                        'revenue': post.get('revenue', 0),
+                        'orders': post.get('orders', 0),
+                        'avg_price': post.get('avg_price', 0),
+                        'orders_growth_percent': post.get('orders_growth_percent', 0),
+                        'revenue_growth_percent': post.get('revenue_growth_percent', 0)
+                    }
+                    
+                    results['recent_posts'].append({
+                        'platform': post.get('platform', 'unknown'),
+                        'date': post.get('date', ''),
+                        'url': post.get('url', ''),
+                        'author': post.get('author', ''),
+                        'sales_impact': sales_impact
+                    })
+    except Exception as e:
+        logger.error(f"Error getting MPSTATS data: {str(e)}")
+    
+    # Сортируем недавние посты по дате
+    results['recent_posts'].sort(key=lambda x: x.get('date', ''), reverse=True)
+    results['recent_posts'] = results['recent_posts'][:5]
+    
+    return results
+
+def format_external_analysis(data):
+    """Форматирование результатов анализа внешней рекламы"""
+    try:
+        # Логируем структуру данных для отладки
+        logger.info(f"Formatting external analysis data: {json.dumps(data, ensure_ascii=False, indent=2)}")
+        
+        # Получаем информацию о товаре
+        product_info = data.get('product_info', {})
+        article = data.get('article', 'Не указан')
+        
+        # Формируем информацию о товаре
+        product_text = (
+            f"*Информация о товаре:*\n"
+            f"• Название: {product_info.get('name', 'Не указано')}\n"
+            f"• Бренд: {product_info.get('brand', 'Не указан')}\n"
+            f"• Артикул: {article}\n"
+            f"• Категория: {product_info.get('category', 'Не указана')}\n"
         )
+        
+        # Обработка цены
+        price_info = product_info.get('price', {})
+        if isinstance(price_info, dict):
+            current_price = price_info.get('current', 0)
+            original_price = price_info.get('original', 0)
+            discount = price_info.get('discount', 0)
+            product_text += f"• Цена: {current_price:,.2f} ₽"
+            if original_price > current_price:
+                product_text += f" (было {original_price:,.2f} ₽, скидка {discount}%)\n"
+            else:
+                product_text += "\n"
+        else:
+            product_text += f"• Цена: {price_info:,.2f} ₽\n"
+        
+        product_text += (
+            f"• Рейтинг: {product_info.get('rating', 0)} ⭐\n"
+            f"• Отзывы: {product_info.get('feedbacks', 0):,}\n\n"
+        )
+        
+        # Проверяем наличие данных о рекламе
+        if not data.get('recent_posts'):
+            return f"{product_text}*Внешняя реклама:*\nДанные о внешней рекламе не найдены.", []
+        
+        # Подготавливаем данные для safe_format_mpsta_results
+        serper_like_results = []
+        for post in data.get('recent_posts', []):
+            serper_like_results.append({
+                'site': post.get('platform', ''),
+                'link': post.get('url', ''),
+                'title': post.get('author', ''),
+                'snippet': '',
+                'likes': post.get('sales_impact', {}).get('likes', 0),
+                'views': post.get('sales_impact', {}).get('views', 0)
+            })
+        
+        # Используем безопасную функцию, чтобы сгенерировать подробный отчёт и графики
+        mpsta_like_data = {
+            'query': article,
+            'is_article': str(article).isdigit(),
+            'mpsta_results': {},
+            'serper_results': {
+                'results': serper_like_results
+            }
+        }
+
+        from safe_mpsta import safe_format_mpsta_results
+        detailed_text, chart_files = safe_format_mpsta_results(mpsta_like_data)
+
+        combined_text = product_text + detailed_text
+
+        return combined_text, chart_files
+        
+    except Exception as e:
+        logger.error(f"Error formatting external analysis: {str(e)}")
+        return "Ошибка при форматировании данных о внешней рекламе.", []
+
+@dp.callback_query(lambda c: c.data == "brand_analysis")
+async def handle_brand_analysis(callback_query: types.CallbackQuery, state: FSMContext):
+    await state.set_state(UserStates.waiting_for_brand)
+    await callback_query.message.edit_text(
+        "🏢 *Анализ бренда*\n\n"
+        "Введите название бренда для анализа:",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=back_keyboard()
+    )
+
+@dp.callback_query(lambda c: c.data == "external_analysis")
+async def handle_external_analysis(callback_query: types.CallbackQuery, state: FSMContext):
+    """Обработчик нажатия на кнопку Анализ внешки"""
+    try:
+        # Устанавливаем состояние ожидания ввода артикула/названия
+        await state.set_state(UserStates.waiting_for_external)
+        
+        # Отправляем сообщение с инструкцией
+        await callback_query.message.edit_text(
+            "🔍 *Анализ внешней рекламы*\n\n"
+            "Введите артикул товара или его название для анализа рекламных публикаций.\n\n"
+            "Я проанализирую:\n"
+            "• 📊 Рекламные публикации\n"
+            "• 👥 Блогеров и их эффективность\n"
+            "• 📈 Влияние на продажи\n"
+            "• 💰 Доход от рекламы\n\n"
+            f"💵 Стоимость анализа: {COSTS['external_analysis']}₽",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=back_keyboard()
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in handle_external_analysis: {str(e)}", exc_info=True)
+        await callback_query.message.edit_text(
+            "❌ *Произошла ошибка*\n\n"
+            "Пожалуйста, попробуйте позже или обратитесь в поддержку.",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=back_keyboard()
+        )
+
+@dp.message(lambda message: message.text and message.text.strip(), UserStates.waiting_for_external)
+async def handle_external_input(message: types.Message, state: FSMContext):
+    """Обработка ввода артикула/названия товара для анализа внешней рекламы"""
+    try:
+        query = message.text.strip()
+        
+        # Отправляем сообщение о начале анализа
+        await message.answer("🔍 *Анализ внешней рекламы*\n\nПолучаю данные...")
+        
+        # Получаем данные о внешней рекламе
+        external_data = await get_external_ads_data(query)
+        
+        if external_data is None:
+            await message.answer(
+                "❌ Не удалось получить данные о внешней рекламе.\n\n"
+                "Пожалуйста, проверьте правильность артикула/названия товара и попробуйте снова."
+            )
+            return
+            
+        if isinstance(external_data, dict) and external_data.get("error"):
+            error_message = external_data.get("message", "Неизвестная ошибка")
+            error_code = external_data.get("code", "unknown")
+            
+            await message.answer(
+                f"❌ *Ошибка при получении данных*\n\n"
+                f"Сообщение: {error_message}\n"
+                f"Код ошибки: {error_code}\n\n"
+                "Пожалуйста, попробуйте позже или обратитесь в поддержку."
+            )
+            return
+        
+        # Форматируем и отправляем результаты
+        formatted_text, chart_files = format_external_analysis(external_data)
+        await message.answer(formatted_text, parse_mode="Markdown", disable_web_page_preview=True)
+
+        # Если есть графики — отправляем их отдельным медиа-группой
+        if chart_files:
+            from aiogram.types.input_file import FSInputFile
+            for file_path in chart_files:
+                try:
+                    await message.answer_photo(FSInputFile(file_path))
+                except Exception as img_err:
+                    logger.error(f"Error sending chart {file_path}: {str(img_err)}")
+        
+    except Exception as e:
+        logger.error(f"Error in external analysis: {str(e)}", exc_info=True)
+        await message.answer(
+            "❌ *Произошла ошибка при выполнении анализа*\n\n"
+            f"Детали: {str(e)}\n\n"
+            "Пожалуйста, попробуйте позже или обратитесь в поддержку."
+        )
+    finally:
+        # Используем clear() вместо finish()
+        await state.clear()
 
 if __name__ == '__main__':
     asyncio.run(main()) 

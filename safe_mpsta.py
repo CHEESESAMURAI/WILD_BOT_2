@@ -16,7 +16,13 @@ def safe_format_mpsta_results(data):
         query = data.get("query", "")
         is_article = data.get("is_article", False)
         mpsta_results = data.get("mpsta_results", {})
-        serper_results = data.get("serper_results", {}).get("results", [])
+        _serper_raw = data.get("serper_results", [])
+        if isinstance(_serper_raw, dict):
+            serper_results = _serper_raw.get("results", [])
+        elif isinstance(_serper_raw, list):
+            serper_results = _serper_raw
+        else:
+            serper_results = []
         
         # Формируем сводную информацию о товаре/нише
         summary = f"🔍 *Анализ рекламы {'по артикулу' if is_article else 'товара'}: {query}*\n\n"

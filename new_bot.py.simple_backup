@@ -4625,7 +4625,6 @@ async def main():
     finally:
         await bot.session.close()
 
-
 async def get_external_ads_data(query):
     """Получение данных о внешней рекламе товаров через MPSTAT API"""
     try:
@@ -4673,27 +4672,42 @@ def format_external_analysis(data):
         if is_article:
             product_name = product_info.get("name", "")
             brand = product_info.get("brand", "")
-            result = f"📊 *Анализ внешней рекламы*\n\n"
-            result += f"*Артикул:* {query}\n"
+            result = f"📊 *Анализ внешней рекламы*
+
+"
+            result += f"*Артикул:* {query}
+"
             if product_name:
-                result += f"*Товар:* {product_name}\n"
+                result += f"*Товар:* {product_name}
+"
             if brand:
-                result += f"*Бренд:* {brand}\n"
+                result += f"*Бренд:* {brand}
+"
         else:
-            result = f"📊 *Анализ внешней рекламы по запросу:* {query}\n\n"
+            result = f"📊 *Анализ внешней рекламы по запросу:* {query}
+
+"
         
         if not ad_items:
-            result += "\n⚠️ *Не найдено данных о рекламных публикациях.*"
+            result += "
+⚠️ *Не найдено данных о рекламных публикациях.*"
             return result, chart_files
         
         # Информация о найденных публикациях
-        result += f"\n📣 *Найдено публикаций:* {len(ad_items)}\n"
+        result += f"
+📣 *Найдено публикаций:* {len(ad_items)}
+"
         
         # Таблица с данными о публикациях
-        result += "\n*Таблица публикаций:*\n"
-        result += "```\n"
-        result += "№  | Площадка | Блогер | Дата | Частотность | Выручка | Заказы | Прирост(%)\n"
-        result += "---|-----------|---------|---------|---------|---------|---------|---------\n"
+        result += "
+*Таблица публикаций:*
+"
+        result += "```
+"
+        result += "№  | Площадка | Блогер | Дата | Частотность | Выручка | Заказы | Прирост(%)
+"
+        result += "---|-----------|---------|---------|---------|---------|---------|---------
+"
         
         # Ограничиваем количество публикаций в таблице (не более 10)
         for i, ad in enumerate(ad_items[:10], 1):
@@ -4709,16 +4723,21 @@ def format_external_analysis(data):
             growth_percent = ad.get("sales_growth_percent", 0)
             
             # Форматируем данные для таблицы
-            result += f"{i} | {platform[:8]}... | {blogger[:8]}... | {date} | {total_frequency} | {total_revenue:,.0f}₽ | {orders} | {growth_percent:.1f}%\n"
+            result += f"{i} | {platform[:8]}... | {blogger[:8]}... | {date} | {total_frequency} | {total_revenue:,.0f}₽ | {orders} | {growth_percent:.1f}%
+"
         
-        result += "```\n"
+        result += "```
+"
         
         # Если публикаций больше 10, добавляем примечание
         if len(ad_items) > 10:
-            result += f"_Показаны первые 10 из {len(ad_items)} публикаций_\n"
+            result += f"_Показаны первые 10 из {len(ad_items)} публикаций_
+"
         
         # Заключение и рекомендации
-        result += "\n📋 *Выводы и рекомендации:*\n"
+        result += "
+📋 *Выводы и рекомендации:*
+"
         
         if bloggers_data:
             # Находим блогеров с наилучшими показателями
@@ -4728,12 +4747,14 @@ def format_external_analysis(data):
             if best_growth_bloggers:
                 top_blogger = best_growth_bloggers[0]
                 result += f"• Лучший результат по приросту продаж показал блогер *{top_blogger[0]}* " \
-                          f"(средний прирост {top_blogger[1]['avg_growth_percent']:.1f}%).\n"
+                          f"(средний прирост {top_blogger[1]['avg_growth_percent']:.1f}%).
+"
             
             if best_freq_bloggers:
                 top_freq_blogger = best_freq_bloggers[0]
                 result += f"• Наибольшую частотность обеспечил блогер *{top_freq_blogger[0]}* " \
-                          f"(в среднем {top_freq_blogger[1]['avg_frequency']:.1f} продаж).\n"
+                          f"(в среднем {top_freq_blogger[1]['avg_frequency']:.1f} продаж).
+"
             
             # Рекомендации по площадкам
             platforms = {}
@@ -4756,16 +4777,39 @@ def format_external_analysis(data):
             if best_platforms:
                 top_platform = best_platforms[0]
                 result += f"• Наилучшие результаты показывает площадка *{top_platform[0]}* " \
-                          f"(средний прирост {top_platform[1]['avg_growth']:.1f}%).\n"
+                          f"(средний прирост {top_platform[1]['avg_growth']:.1f}%).
+"
         else:
             result += "• Недостаточно данных для формирования конкретных рекомендаций. " \
-                      "Рекомендуется расширить поисковый запрос или проверить другие товары.\n"
+                      "Рекомендуется расширить поисковый запрос или проверить другие товары.
+"
         
         return result, chart_files
     
     except Exception as e:
         logger.error(f"Error formatting external analysis: {str(e)}", exc_info=True)
         return f"❌ Ошибка при форматировании анализа: {str(e)}", []
+
+@dp.callback_query(lambda c: c.data == "brand_analysis")
+async def handle_brand_analysis(callback_query: types.CallbackQuery, state: FSMContext):
+    await state.set_state(UserStates.waiting_for_brand)
+    await callback_query.message.edit_text(
+        "🏢 *Анализ бренда*\n\n"
+        "Введите название бренда для анализа:",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=back_keyboard()
+    )
+
+@dp.callback_query(lambda c: c.data == "external_analysis")
+async def handle_external_analysis(callback_query: types.CallbackQuery, state: FSMContext):
+    await state.set_state(UserStates.waiting_for_external)
+    await callback_query.message.edit_text(
+        "🔍 *Анализ внешней рекламы*\n\n"
+        "Введите название товара или артикул для анализа внешней рекламы:\n\n"
+        "Примеры: Носки, 176409037",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=back_keyboard()
+    )
 
 @dp.message(lambda message: message.text and message.text.strip(), UserStates.waiting_for_external)
 async def handle_external_input(message: types.Message, state: FSMContext):
@@ -4775,84 +4819,241 @@ async def handle_external_input(message: types.Message, state: FSMContext):
     logger.info(f"User {user_id} requested external analysis for: {query}")
     
     # Проверяем баланс пользователя
+    # Проверяем баланс пользователя
     balance = subscription_manager.get_user_balance(user_id)
     if balance < COSTS["external_analysis"]:
-        await message.reply(
-            f"❌ *Недостаточно средств для анализа внешней рекламы*\n\n"
-            f"Стоимость операции: {COSTS['external_analysis']}₽\n"
-            f"Ваш баланс: {balance}₽\n\n"
-            f"Пожалуйста, пополните баланс.",
-            parse_mode=ParseMode.MARKDOWN
-        )
-        return
+        balance = subscription_manager.get_user_balance(user_id)
+        
+        if balance < COSTS["external_analysis"]:
+            await message.reply(
+                f"❌ *Недостаточно средств для анализа внешней рекламы*\n\n"
+                f"Стоимость операции: {COSTS['external_analysis']}₽\n"
+                f"Ваш баланс: {balance}₽\n\n"
+                f"Пожалуйста, пополните баланс.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+        
+        # Списываем средства
+        subscription_manager.update_user_balance(user_id, -COSTS["external_analysis"])
+        logger.info(f"Charged {COSTS['external_analysis']} for external analysis from user {user_id}")
+    
+    # Обновляем счетчики в подписке
+    # Пытаемся обновить счетчики в подписке, если она есть
+    try:
+        subscription_manager.increment_action_counter(user_id, "external_analysis")
+    except Exception as e:
+        logger.warning(f"Could not increment action counter for user {user_id}: {str(e)}")
     
     # Отправляем сообщение о начале анализа
-    loading_msg = await message.reply("🔍 *Анализирую внешнюю рекламу...*", parse_mode=ParseMode.MARKDOWN)
+    await message.reply("🔄 *Начинаю анализ внешней рекламы...*", parse_mode=ParseMode.MARKDOWN)
+    
+    # Показываем "печатает"
+    await bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
     
     try:
-        # Списываем средства с баланса пользователя
-        subscription_manager.deduct_balance(user_id, COSTS["external_analysis"])
-        
         # Определяем, является ли запрос артикулом или названием товара
-        is_article = query.isdigit() and len(query) >= 6
+        is_article = query.isdigit()
         
-        # Получаем данные о внешней рекламе
-        external_data = {"query": query, "is_article": is_article, "ad_items": []}
+        # Получаем данные за последние 30 дней
+        today = datetime.now()
+        date_to = today.strftime("%Y-%m-%d")
+        date_from = (today - timedelta(days=30)).strftime("%Y-%m-%d")
         
+        headers = {
+            "Content-Type": "application/json",
+            "X-Mpstats-TOKEN": MPSTA_API_KEY,
+            "Accept": "application/json"
+        }
+        
+        external_data = {
+            "is_article": is_article,
+                                "query": query,
+            "ad_items": [],
+            "bloggers_data": {}
+                            }
+                            
         if is_article:
-            # Для артикула сначала получаем информацию о товаре
-            product_info = await get_wb_product_info(query)
-            external_data["product_info"] = product_info
-            
-            # Затем получаем данные о внешней рекламе
-            ad_data = await get_external_ads_data(query)
-            if "error" not in ad_data:
-                external_data["ad_items"] = ad_data.get("items", [])
-            else:
-                external_data["error"] = ad_data["error"]
+            # Запрашиваем данные о рекламе для артикула
+            ad_url = f"https://mpstats.io/api/wb/get/item/{query}/adverts?d1={date_from}&d2={date_to}"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(ad_url, headers=headers) as response:
+                    if response.status == 200:
+                        ad_data = await response.json()
+                        
+                        # Информация о товаре
+                        product_url = f"https://mpstats.io/api/wb/get/item/{query}"
+                        async with session.get(product_url, headers=headers) as product_response:
+                            if product_response.status == 200:
+                                product_data = await product_response.json()
+                                external_data["product_info"] = product_data
+                        
+                        # Данные о продажах до и после публикаций
+                        sales_url = f"https://mpstats.io/api/wb/get/item/{query}/sales?d1={date_from}&d2={date_to}"
+                        async with session.get(sales_url, headers=headers) as sales_response:
+                            if sales_response.status == 200:
+                                sales_data = await sales_response.json()
+                                external_data["sales_data"] = sales_data
+                        
+                        # Обрабатываем данные о рекламе
+                        if "items" in ad_data and len(ad_data["items"]) > 0:
+                            # Создаем словарь с датами продаж для быстрого доступа
+                            sales_by_date = {}
+                            if "sales_data" in external_data and "data" in external_data["sales_data"]:
+                                for day_data in external_data["sales_data"]["data"]:
+                                    date = day_data.get("date", "")
+                                    if date:
+                                        sales_by_date[date] = {
+                                            "revenue": day_data.get("revenue", 0),
+                                            "sales": day_data.get("sales", 0)
+                                        }
+                            
+                            # Обрабатываем каждую рекламную публикацию
+                            for ad in ad_data["items"]:
+                                # Базовая информация о публикации
+                                ad_info = {
+                                    "platform": ad.get("platform", "Неизвестно"),
+                                    "blogger": ad.get("blogger", {}).get("name", "Неизвестный"),
+                                    "blogger_id": ad.get("blogger", {}).get("id", ""),
+                                    "url": ad.get("url", ""),
+                                    "date": ad.get("date", ""),
+                                    "likes": ad.get("likes", 0),
+                                    "views": ad.get("views", 0),
+                                }
+                                
+                                # Анализ продаж и выручки за 3 дня до и после публикации
+                                if ad_info["date"]:
+                                    publication_date = datetime.fromisoformat(ad_info["date"].split("T")[0])
+                                    
+                                    # Данные за 3 дня до публикации
+                                    before_sales = 0
+                                    before_revenue = 0
+                                    for i in range(1, 4):  # 3 дня до
+                                        before_date = (publication_date - timedelta(days=i)).strftime("%Y-%m-%d")
+                                        if before_date in sales_by_date:
+                                            before_sales += sales_by_date[before_date]["sales"]
+                                            before_revenue += sales_by_date[before_date]["revenue"]
+                                    
+                                    # Данные за 3 дня после публикации (включая день публикации)
+                                    after_sales = 0
+                                    after_revenue = 0
+                                    for i in range(0, 3):  # День публикации + 2 дня после
+                                        after_date = (publication_date + timedelta(days=i)).strftime("%Y-%m-%d")
+                                        if after_date in sales_by_date:
+                                            after_sales += sales_by_date[after_date]["sales"]
+                                            after_revenue += sales_by_date[after_date]["revenue"]
+                                    
+                                    # Рассчитываем прирост
+                                    sales_growth = after_sales - before_sales
+                                    revenue_growth = after_revenue - before_revenue
+                                    
+                                    # Процентный прирост (избегаем деления на ноль)
+                                    sales_growth_percent = 0
+                                    revenue_growth_percent = 0
+                                    if before_sales > 0:
+                                        sales_growth_percent = (sales_growth / before_sales) * 100
+                                    if before_revenue > 0:
+                                        revenue_growth_percent = (revenue_growth / before_revenue) * 100
+                                    
+                                    # Добавляем метрики в информацию о публикации
+                                    ad_info["total_frequency_3days"] = after_sales
+                                    ad_info["total_revenue_3days"] = after_revenue
+                                    ad_info["avg_price_3days"] = after_revenue / after_sales if after_sales > 0 else 0
+                                    ad_info["sales_growth_percent"] = sales_growth_percent
+                                    ad_info["revenue_growth_percent"] = revenue_growth_percent
+                                    ad_info["sales_growth_abs"] = sales_growth
+                                    ad_info["revenue_growth_abs"] = revenue_growth
+                                    
+                                    # Добавляем к данным о блогере
+                                    blogger = ad_info["blogger"]
+                                    if blogger not in external_data["bloggers_data"]:
+                                        external_data["bloggers_data"][blogger] = {
+                                            "total_frequency": 0,
+                                            "total_revenue": 0,
+                                            "total_orders": 0,
+                                            "avg_frequency": 0,
+                                            "avg_revenue": 0,
+                                            "avg_orders": 0,
+                                            "avg_sales_growth_percent": 0,
+                                            "avg_revenue_growth_percent": 0,
+                                            "avg_sales_growth_abs": 0,
+                                            "avg_revenue_growth_abs": 0,
+                                            "positive_growth_percent": 0,
+                                            "publications_count": 0,
+                                            "positive_growth_count": 0
+                                        }
+                                    
+                                    external_data["bloggers_data"][blogger]["total_frequency"] += after_sales
+                                    external_data["bloggers_data"][blogger]["total_revenue"] += after_revenue
+                                    external_data["bloggers_data"][blogger]["total_orders"] += after_sales
+                                    external_data["bloggers_data"][blogger]["avg_sales_growth_percent"] += sales_growth_percent
+                                    external_data["bloggers_data"][blogger]["avg_revenue_growth_percent"] += revenue_growth_percent
+                                    external_data["bloggers_data"][blogger]["avg_sales_growth_abs"] += sales_growth
+                                    external_data["bloggers_data"][blogger]["avg_revenue_growth_abs"] += revenue_growth
+                                    external_data["bloggers_data"][blogger]["publications_count"] += 1
+                                    
+                                    if sales_growth_percent > 0:
+                                        external_data["bloggers_data"][blogger]["positive_growth_count"] += 1
+                                
+                                # Добавляем информацию о публикации в результаты
+                                external_data["ad_items"].append(ad_info)
+                            
+                            # Рассчитываем средние значения для каждого блогера
+                            for blogger, data in external_data["bloggers_data"].items():
+                                if data["publications_count"] > 0:
+                                    data["avg_frequency"] = data["total_frequency"] / data["publications_count"]
+                                    data["avg_revenue"] = data["total_revenue"] / data["publications_count"]
+                                    data["avg_orders"] = data["total_orders"] / data["publications_count"]
+                                    data["avg_sales_growth_percent"] = data["avg_sales_growth_percent"] / data["publications_count"]
+                                    data["avg_revenue_growth_percent"] = data["avg_revenue_growth_percent"] / data["publications_count"]
+                                    data["avg_sales_growth_abs"] = data["avg_sales_growth_abs"] / data["publications_count"]
+                                    data["avg_revenue_growth_abs"] = data["avg_revenue_growth_abs"] / data["publications_count"]
+                                    
+                                    # Процент публикаций с положительным ростом
+                                    if data["positive_growth_count"] > 0:
+                                        data["positive_growth_percent"] = (data["positive_growth_count"] / data["publications_count"]) * 100
+                        else:
+                        external_data["error"] = f"Ошибка API MPSTAT: {response.status}"
+                        logger.error(f"MPSTAT API error: {await response.text()}")
         else:
-            # Для поискового запроса (названия товара) получаем данные о внешней рекламе
-            ad_data = await get_external_ads_data(query)
-            if "error" not in ad_data:
-                external_data["ad_items"] = ad_data.get("items", [])
-            else:
-                external_data["error"] = ad_data["error"]
+            # Для поискового запроса (названия товара) сначала ищем товары
+            search_url = f"https://mpstats.io/api/wb/get/search?query={query}"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(search_url, headers=headers) as response:
+                    if response.status == 200:
+                        search_data = await response.json()
+                        
+                        # Если найдены товары, получаем данные о первых 5
+                        if "items" in search_data and len(search_data["items"]) > 0:
+                            external_data["search_results"] = search_data["items"][:5]
+                            
+                            # Получаем данные о рекламе для каждого найденного товара
+                            for item in search_data["items"][:5]:
+                                article = item.get("id") or item.get("nmId")
+                                if article:
+                                    # Получаем данные о рекламе для этого артикула
+                                    ad_url = f"https://mpstats.io/api/wb/get/item/{article}/adverts?d1={date_from}&d2={date_to}"
+                                    async with session.get(ad_url, headers=headers) as ad_response:
+                                        if ad_response.status == 200:
+                                            ad_data = await ad_response.json()
+                                            if "items" in ad_data:
+                                                external_data["ad_items"].extend(ad_data["items"])
+                            else:
+                            external_data["error"] = "Товары не найдены"
+                    else:
+                        external_data["error"] = f"Ошибка API MPSTAT: {response.status}"
+                        logger.error(f"MPSTAT API error: {await response.text()}")
         
-        # Анализируем данные о блогерах
-        if external_data["ad_items"]:
-            bloggers_data = {}
-            for ad in external_data["ad_items"]:
-                blogger_name = ad.get("blogger", {}).get("name", "Неизвестно")
-                growth_percent = ad.get("sales_growth_percent", 0)
-                frequency = ad.get("total_frequency_3days", 0)
-                
-                if blogger_name not in bloggers_data:
-                    bloggers_data[blogger_name] = {
-                        "publications": 0,
-                        "total_growth": 0,
-                        "avg_growth_percent": 0,
-                        "total_frequency": 0,
-                        "avg_frequency": 0
-                    }
-                
-                bloggers_data[blogger_name]["publications"] += 1
-                bloggers_data[blogger_name]["total_growth"] += growth_percent
-                bloggers_data[blogger_name]["total_frequency"] += frequency
-            
-            # Вычисляем средние значения
-            for blogger, data in bloggers_data.items():
-                if data["publications"] > 0:
-                    data["avg_growth_percent"] = data["total_growth"] / data["publications"]
-                    data["avg_frequency"] = data["total_frequency"] / data["publications"]
-            
-            external_data["bloggers_data"] = bloggers_data
+        # Если произошла ошибка, сообщаем пользователю
+        if "error" in external_data:
+            await message.reply(
+                f"❌ *Ошибка при получении данных*\n\n{external_data['error']}",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
         
-        # Форматируем результаты анализа
-        result_text, chart_files = format_external_analysis(external_data)
-        
-        # Отправляем результаты анализа
-        await loading_msg.delete()
-        await message.reply(result_text, parse_mode=ParseMode.MARKDOWN)
+        # Форматируем данные для отображения
+        formatted_result, chart_files = format_external_analysis(external_data)
         
         # Если есть графики, отправляем их
         if chart_files:
@@ -4862,7 +5063,7 @@ async def handle_external_input(message: types.Message, state: FSMContext):
                 try:
                     photo = FSInputFile(chart_file)
                     media.append(InputMediaPhoto(media=photo))
-                except Exception as e:
+    except Exception as e:
                     logger.error(f"Error adding chart to media group: {str(e)}")
             
             if media:
@@ -4870,39 +5071,51 @@ async def handle_external_input(message: types.Message, state: FSMContext):
                     await bot.send_media_group(chat_id=message.chat.id, media=media)
                 except Exception as e:
                     logger.error(f"Error sending media group: {str(e)}")
+                    
+                    # Если не удалось отправить медиагруппу, пробуем отправить графики по одному
+                    for chart_file in chart_files:
+                        try:
+                            await bot.send_photo(
+                                chat_id=message.chat.id,
+                                photo=FSInputFile(chart_file),
+                                caption="График анализа внешней рекламы"
+                            )
+                        except Exception as chart_e:
+                            logger.error(f"Error sending chart: {str(chart_e)}")
+            
+            # Удаляем временные файлы
+    for chart_file in chart_files:
+        try:
+            os.remove(chart_file)
+        except Exception as e:
+            logger.error(f"Error removing temp file {chart_file}: {str(e)}")
         
-        # Добавляем запись в историю анализов пользователя
-        new_analysis = {
-            "type": "external",
-            "query": query,
-            "timestamp": datetime.now().isoformat(),
-            "result": result_text
-        }
-        
-        user_data = await state.get_data()
-        analyses_history = user_data.get("analyses_history", [])
-        analyses_history.append(new_analysis)
-        
-        # Ограничиваем историю 10 последними анализами
-        if len(analyses_history) > 10:
-            analyses_history = analyses_history[-10:]
-        
-        await state.update_data(analyses_history=analyses_history)
-        
-        # Очищаем состояние
-        await state.clear()
-    
-    except Exception as e:
-        logger.error(f"Error in external analysis: {str(e)}", exc_info=True)
-        
-        await message.reply(
-            "❌ *Произошла ошибка при анализе внешней рекламы*\n\n"
-            f"Детали ошибки: {str(e)}",
+        # Отправляем отчет
+    await message.reply(
+            formatted_result,
             parse_mode=ParseMode.MARKDOWN
         )
         
-        # Возвращаем средства пользователю в случае ошибки
-        subscription_manager.add_balance(user_id, COSTS["external_analysis"])
+        # Предлагаем меню
+    await message.answer(
+            "📊 *Анализ завершен*\n\nЧто хотите сделать дальше?",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=main_menu_kb()
+        )
+        
+        # Очищаем состояние
+    await state.clear()
     
-    # Отправляем клавиатуру главного меню
-    await message.answer("Выберите действие:", reply_markup=main_menu_kb())
+        except Exception as e:
+        logger.error(f"Error in external analysis: {str(e)}", exc_info=True)
+        
+        await message.reply(
+            "❌ *Произошла ошибка при выполнении анализа*\n\n"
+            f"Детали: {str(e)}\n\n"
+            "Пожалуйста, попробуйте позже или выберите другой товар/артикул.",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=back_keyboard()
+        )
+
+if __name__ == '__main__':
+    asyncio.run(main())

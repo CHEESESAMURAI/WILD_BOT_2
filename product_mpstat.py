@@ -3,6 +3,7 @@ import aiohttp
 import logging
 import json
 from datetime import datetime, timedelta
+from mpstats_item_sales import get_item_sales as fetch_item_sales, parse_item_sales_data
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -275,11 +276,50 @@ async def get_product_mpstat_info(article):
         logger.error(f"Error getting MPSTAT product info: {str(e)}", exc_info=True)
         return None
 
+async def get_product_item_sales(article, publish_date, days=3):
+    """
+    Получает данные о продажах по SKU за период после публикации.
+    
+    Args:
+        article (str): Артикул товара Wildberries
+        publish_date (str): Дата публикации в формате YYYY-MM-DD
+        days (int, optional): Количество дней после публикации для анализа
+    
+    Returns:
+        dict: Данные о продажах за указанный период
+    """
+    try:
+        logger.info(f"Getting item sales data for article {article} from {publish_date} for {days} days")
+        
+        # Вызываем функцию из mpstats_item_sales.py
+        sales_data = await fetch_item_sales(article, publish_date, days)
+        
+        # Парсим полученные данные
+        parsed_data = parse_item_sales_data(sales_data)
+        
+        return parsed_data
+    except Exception as e:
+        logger.error(f"Error getting item sales data: {str(e)}")
+        return {
+            "success": False,
+            "error": f"Error getting item sales data: {str(e)}"
+        }
+
 # Тестирование функции
 async def main():
-    article = "123456" # Тестовый артикул
+    """Тестовая функция для проверки API."""
+    article = "360832704"  # Тестовый артикул
+    
+    # Получаем общую информацию о товаре
     result = await get_product_mpstat_info(article)
-    print(result)
+    print("Результат API MPSTAT (общая информация):")
+    print(json.dumps(result, indent=2))
+    
+    # Тестируем новую функцию для получения данных о продажах
+    publish_date = "2023-05-01"  # Пример даты публикации
+    sales_result = await get_product_item_sales(article, publish_date)
+    print("\n\nРезультат API MPSTAT (данные о продажах после публикации):")
+    print(json.dumps(sales_result, indent=2))
 
 if __name__ == "__main__":
     asyncio.run(main())
