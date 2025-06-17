@@ -78,6 +78,7 @@ from reportlab.graphics.shapes import Drawing
 from reportlab.graphics.charts.linecharts import HorizontalLineChart
 from reportlab.graphics.charts.barcharts import VerticalBarChart
 from brand_analysis import get_brand_info, format_brand_analysis
+from niche_analysis_functions import analyze_niche_with_mpstats, format_niche_analysis_result, generate_niche_analysis_charts
 
 # Настройка логирования
 logging.basicConfig(
@@ -328,8 +329,11 @@ async def profile_callback(callback_query: types.CallbackQuery):
         
         # Ловим возможную ошибку при редактировании сообщения
         try:
+            # Заменяем все символы "\\n" на реальные переводы строки, если они были добавлены ранее
+            clean_profile_text = profile_text.replace("\\n", "\n")
+
             await callback_query.message.edit_text(
-                profile_text,
+                clean_profile_text,
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=keyboard
             )
@@ -338,7 +342,7 @@ async def profile_callback(callback_query: types.CallbackQuery):
             # Если не удалось отредактировать сообщение, пробуем без Markdown
             try:
                 await callback_query.message.edit_text(
-                    profile_text.replace('*', ''),  # Удаляем Markdown форматирование
+                    clean_profile_text.replace('*', ''),  # Удаляем Markdown форматирование
                     reply_markup=keyboard
                 )
             except Exception as plain_error:
@@ -354,9 +358,13 @@ async def profile_callback(callback_query: types.CallbackQuery):
 @dp.callback_query(lambda c: c.data == "add_funds")
 async def add_funds_callback(callback_query: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserStates.waiting_for_payment_amount)
-    await callback_query.message.edit_text(
+    add_funds_text = (
         "💰 *Пополнение баланса*\\n\\n"
-        "Введите сумму пополнения (минимум 100₽):",
+        "Введите сумму пополнения (минимум 100₽):"
+    ).replace("\\n", "\n")
+
+    await callback_query.message.edit_text(
+        add_funds_text,
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=back_keyboard()
     )
@@ -365,7 +373,7 @@ async def add_funds_callback(callback_query: types.CallbackQuery, state: FSMCont
 @dp.callback_query(lambda c: c.data == "subscription")
 async def subscription_callback(callback_query: types.CallbackQuery):
     subscription_text = (
-        "📅 *Доступные подписки:*\n\n"
+        "📅 *Доступные подписки:*\\n\\n"
         f"*Basic:* {SUBSCRIPTION_COSTS['basic']}₽/мес\\n"
         "• 10 анализов товаров\\n"
         "• 5 анализов ниш\\n"
@@ -378,7 +386,7 @@ async def subscription_callback(callback_query: types.CallbackQuery):
         "• Неограниченное количество анализов\\n"
         "• Отслеживание 200 товаров\\n"
         "• Приоритетная поддержка"
-    )
+    ).replace("\\n", "\n")
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -410,11 +418,15 @@ async def handle_subscription_selection(callback_query: types.CallbackQuery):
             subscription_manager.update_subscription(user_id, subscription_type)
             subscription_manager.update_balance(user_id, -cost)
             
-            await callback_query.message.edit_text(
+            success_text = (
                 f"✅ Подписка {subscription_type.capitalize()} успешно оформлена!\\n\\n"
                 f"Списано: {cost}₽\\n"
                 f"Остаток на балансе: {balance - cost}₽\\n\\n"
-                "Теперь вам доступны все функции выбранного тарифа.",
+                "Теперь вам доступны все функции выбранного тарифа."
+            ).replace("\\n", "\n")
+
+            await callback_query.message.edit_text(
+                success_text,
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="◀️ В меню", callback_data="back_to_main")]
@@ -422,11 +434,15 @@ async def handle_subscription_selection(callback_query: types.CallbackQuery):
             )
         else:
             # Если недостаточно средств, предлагаем пополнить баланс
-            await callback_query.message.edit_text(
+            error_text = (
                 f"❌ Недостаточно средств для оформления подписки {subscription_type.capitalize()}\\n\\n"
                 f"Стоимость: {cost}₽\\n"
                 f"Ваш баланс: {balance}₽\\n\\n"
-                "Пожалуйста, пополните баланс для оформления подписки.",
+                "Пожалуйста, пополните баланс для оформления подписки."
+            ).replace("\\n", "\n")
+
+            await callback_query.message.edit_text(
+                error_text,
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="add_funds")],
@@ -553,6 +569,67 @@ async def handle_brand_name(message: types.Message, state: FSMContext):
         logger.error(f"Error in handle_brand_name: {str(e)}", exc_info=True)
         await message.answer(f"❌ Произошла ошибка при анализе бренда: {str(e)}", reply_markup=back_keyboard())
         await state.clear()
+
+@dp.message(lambda message: message.text and message.text.strip(), UserStates.waiting_for_niche)
+async def handle_niche_input(message: types.Message, state: FSMContext):
+    """Обрабатывает ввод пользователя для анализа ниши."""
+    try:
+        user_id = message.from_user.id
+        input_text = message.text.strip()
+        
+        logger.info(f"User {user_id} entered niche input: '{input_text}'")
+        
+        # Отправляем сообщение о начале анализа
+        processing_msg = await message.answer("⏳ Анализирую нишу, это может занять до 2 минут...")
+        
+        # Выполняем анализ ниши с помощью импортированной функции
+        niche_data = await analyze_niche_with_mpstats(input_text)
+        
+        if not niche_data or ("error" in niche_data and niche_data["error"]):
+            await processing_msg.delete()
+            error_msg = niche_data.get("error", "Неизвестная ошибка") if niche_data else "Не удалось провести анализ"
+            await message.answer(f"❌ {error_msg}", reply_markup=back_keyboard())
+            return
+        
+        # Форматируем результат анализа
+        formatted_result = format_niche_analysis_result(niche_data, input_text)
+        
+        # Генерируем графики
+        chart_paths = generate_niche_analysis_charts(niche_data)
+        
+        # Удаляем сообщение о процессе и отправляем результат
+        await processing_msg.delete()
+        
+        # Отправляем текстовый анализ
+        await message.answer(formatted_result, parse_mode=ParseMode.MARKDOWN, reply_markup=back_keyboard())
+        
+        # Отправляем графики, если они есть
+        if chart_paths:
+            await message.answer("📊 *Графики анализа ниши:*", parse_mode=ParseMode.MARKDOWN)
+            
+            chart_descriptions = {
+                0: "📈 Сравнение подкатегорий по выручке",
+                1: "🔄 Распределение товаров по продажам",
+                2: "📊 Общие метрики ниши"
+            }
+            
+            for i, chart_path in enumerate(chart_paths):
+                try:
+                    description = chart_descriptions.get(i, f"График анализа ниши {i+1}")
+                    await message.answer_photo(FSInputFile(chart_path), caption=description)
+                except Exception as e:
+                    logger.error(f"Error sending chart {chart_path}: {str(e)}")
+        
+        await state.clear()
+        
+        # Декрементируем счетчик действий
+        subscription_manager.decrement_action_count(user_id, "niche_analysis")
+        
+    except Exception as e:
+        logger.error(f"Error in handle_niche_input: {str(e)}", exc_info=True)
+        await message.answer(f"❌ Произошла ошибка при анализе ниши: {str(e)}", reply_markup=back_keyboard())
+        await state.clear()
+
 @dp.callback_query(lambda c: c.data == "product_search")
 async def handle_global_search(callback_query: types.CallbackQuery, state: FSMContext):
     try:
