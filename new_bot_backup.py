@@ -6616,23 +6616,8 @@ async def handle_seasonality_input(message: types.Message, state: FSMContext):
             parse_mode=ParseMode.MARKDOWN
         )
         
-        # Проверяем если данные пустые или отсутствуют - используем запасную функцию
-        annual_empty = (
-            not annual_data or 
-            annual_data == [] or 
-            (isinstance(annual_data, dict) and (annual_data.get("data") == [] or not annual_data.get("data")))
-        )
-        weekly_empty = (
-            not weekly_data or 
-            weekly_data == [] or 
-            (isinstance(weekly_data, dict) and (weekly_data.get("data") == [] or not weekly_data.get("data")))
-        )
-        
         # Проверяем наличие ошибок в данных
-        has_annual_error = annual_data and isinstance(annual_data, dict) and annual_data.get("error")
-        has_weekly_error = weekly_data and isinstance(weekly_data, dict) and weekly_data.get("error")
-        
-        if has_annual_error and has_weekly_error:
+        if (annual_data and annual_data.get("error")) and (weekly_data and weekly_data.get("error")):
             await processing_message.edit_text(
                 "❌ *Ошибка при получении данных*\n\n"
                 f"Годовая сезонность: {annual_data.get('error', 'Неизвестная ошибка')}\n"
@@ -6647,89 +6632,6 @@ async def handle_seasonality_input(message: types.Message, state: FSMContext):
             )
             await state.clear()
             return
-        
-        # Если данные пустые, используем запасную функцию
-        if annual_empty and weekly_empty:
-            logger.info(f"Using fallback data for category: {category_path}")
-            
-            await processing_message.edit_text(
-                "🗓️ *Анализ сезонности*\n\n"
-                "✅ Этап 1: Получение данных годовой сезонности\n"
-                "✅ Этап 2: Получение данных недельной сезонности\n"
-                "⚠️ Этап 3: Данные API недоступны, использую аналитическую модель...",
-                parse_mode=ParseMode.MARKDOWN
-            )
-            
-            # Импортируем локально, чтобы избежать проблем с отсутствующим файлом
-            try:
-                from seasonality_fallback import get_fallback_seasonality_data, format_fallback_seasonality_analysis
-                
-                # Получаем запасные данные
-                fallback_data = await get_fallback_seasonality_data(category_path)
-                
-                if fallback_data:
-                    # Форматируем результаты запасного анализа
-                    formatted_results = format_fallback_seasonality_analysis(fallback_data, category_path)
-                    
-                    await processing_message.edit_text(
-                        "✅ *Анализ сезонности завершен!*\n\n"
-                        "Отправляю аналитический отчет...",
-                        parse_mode=ParseMode.MARKDOWN
-                    )
-                    
-                    # Отправляем результаты
-                    await message.answer(
-                        formatted_results,
-                        parse_mode=ParseMode.MARKDOWN,
-                        disable_web_page_preview=True
-                    )
-                    
-                    # Клавиатура для навигации
-                    final_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                        [
-                            InlineKeyboardButton(text="🔄 Новый анализ", callback_data="seasonality_analysis"),
-                            InlineKeyboardButton(text="◀️ В меню", callback_data="back_to_main")
-                        ]
-                    ])
-                    
-                    await message.answer(
-                        "✅ *Анализ сезонности завершен!*\n\nВыберите действие:",
-                        parse_mode=ParseMode.MARKDOWN,
-                        reply_markup=final_keyboard
-                    )
-                    
-                    await state.clear()
-                    subscription_manager.decrement_action_count(user_id, "niche_analysis")
-                    return
-                    
-            except ImportError:
-                logger.error("seasonality_fallback module not found")
-            except Exception as e:
-                logger.error(f"Error using fallback data: {str(e)}")
-            
-            # Если запасные данные не сработали
-            await processing_message.edit_text(
-                "❌ *Данные сезонности недоступны*\n\n"
-                "К сожалению, данные о сезонности для указанной категории недоступны.\n\n"
-                "Попробуйте:\n"
-                "• Другую категорию\n"
-                "• Более общий путь категории\n"
-                "• Повторить позже",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=back_keyboard()
-            )
-            await state.clear()
-            return
-        
-        # Если данные получены из API, продолжаем обычный процесс
-        await processing_message.edit_text(
-            "🗓️ *Анализ сезонности*\n\n"
-            "✅ Этап 1: Получение данных годовой сезонности\n"
-            "✅ Этап 2: Получение данных недельной сезонности\n"
-            "✅ Этап 3: Анализ данных\n"
-            "⏳ Этап 4: Создание графиков...",
-            parse_mode=ParseMode.MARKDOWN
-        )
         
         # Создаем графики
         chart_files = generate_seasonality_charts(annual_data, weekly_data, category_path)
