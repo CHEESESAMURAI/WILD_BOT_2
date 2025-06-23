@@ -63,6 +63,7 @@ from aiogram.filters import Command
 from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
 from aiogram.types.input_file import BufferedInputFile
 from aiogram.utils.markdown import hbold, hitalic, hcode, hlink, hunderline, hstrikethrough
+import openai
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.enums import ParseMode
@@ -80,6 +81,7 @@ from reportlab.graphics.charts.barcharts import VerticalBarChart
 from brand_analysis import get_brand_info, format_brand_analysis
 from niche_analysis_functions import analyze_niche_with_mpstats, format_niche_analysis_result, generate_niche_analysis_charts
 
+from ai_generation import generate_ai_content
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
@@ -97,6 +99,7 @@ ADMIN_ID = 1659228199  # Замените на ваш ID в Telegram
 # Ключ для serper.dev API
 SERPER_API_KEY = "8ba851ed7ae1e6a655102bea15d73fdb39cdac79"
 # Обновляем API ключ
+OPENAI_API_KEY = "sk-YOUR_KEY_HERE"  # Замените на ваш OpenAI ключ
 MPSTATS_API_KEY = "68431d2ac72ea4.96910328a56006b24a55daf65db03835d5fe5b4d"  # Новый ключ MPSTATS API
 
 storage = MemoryStorage()
@@ -117,7 +120,8 @@ COSTS = {
     'tracking': 5,
     'global_search': 10,  # Добавляем стоимость глобального поиска
     'external_analysis': 15,  # Добавляем стоимость анализа внешней рекламы
-    'seasonality_analysis': 25  # Добавляем стоимость анализа сезонности
+    'seasonality_analysis': 25,  # Добавляем стоимость анализа сезонности
+    'ai_generation': 20  # Добавляем стоимость AI генерации
 }
 
 # Стоимость подписок
@@ -163,6 +167,7 @@ class UserStates(StatesGroup):
     viewing_search_results = State()
     waiting_for_brand = State()  # Состояние для ожидания ввода бренда
     waiting_for_external = State()  # Состояние для ожидания ввода товара/артикула для анализа внешки
+    waiting_for_ai_input = State()  # Состояние для ожидания ввода для AI помощника
     waiting_for_seasonality = State()  # Состояние для ожидания ввода категории для анализа сезонности
 
 # Приветственное сообщение
@@ -215,6 +220,9 @@ def main_menu_kb():
         [
             InlineKeyboardButton(text="🗓️ Анализ сезонности", callback_data="seasonality_analysis"),
             InlineKeyboardButton(text="📊 Статистика", callback_data="stats")
+        ],
+        [
+            InlineKeyboardButton(text="🤖 Помощь с нейронкой", callback_data="ai_helper")
         ],
         [
             InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")
@@ -1594,7 +1602,8 @@ COSTS = {
     'tracking': 5,
     'global_search': 10,  # Добавляем стоимость глобального поиска
     'external_analysis': 15,  # Добавляем стоимость анализа внешней рекламы
-    'seasonality_analysis': 25  # Добавляем стоимость анализа сезонности
+    'seasonality_analysis': 25,  # Добавляем стоимость анализа сезонности
+    'ai_generation': 20  # Добавляем стоимость AI генерации
 }
 
 # Стоимость подписок
@@ -1640,6 +1649,7 @@ class UserStates(StatesGroup):
     viewing_search_results = State()
     waiting_for_brand = State()  # Состояние для ожидания ввода бренда
     waiting_for_external = State()  # Состояние для ожидания ввода товара/артикула для анализа внешки
+    waiting_for_ai_input = State()  # Состояние для ожидания ввода для AI помощника
     waiting_for_seasonality = State()  # Состояние для ожидания ввода категории для анализа сезонности
 
 # Приветственное сообщение
@@ -1692,6 +1702,9 @@ def main_menu_kb():
         [
             InlineKeyboardButton(text="🗓️ Анализ сезонности", callback_data="seasonality_analysis"),
             InlineKeyboardButton(text="📊 Статистика", callback_data="stats")
+        ],
+        [
+            InlineKeyboardButton(text="🤖 Помощь с нейронкой", callback_data="ai_helper")
         ],
         [
             InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")
@@ -6616,23 +6629,8 @@ async def handle_seasonality_input(message: types.Message, state: FSMContext):
             parse_mode=ParseMode.MARKDOWN
         )
         
-        # Проверяем если данные пустые или отсутствуют - используем запасную функцию
-        annual_empty = (
-            not annual_data or 
-            annual_data == [] or 
-            (isinstance(annual_data, dict) and (annual_data.get("data") == [] or not annual_data.get("data")))
-        )
-        weekly_empty = (
-            not weekly_data or 
-            weekly_data == [] or 
-            (isinstance(weekly_data, dict) and (weekly_data.get("data") == [] or not weekly_data.get("data")))
-        )
-        
         # Проверяем наличие ошибок в данных
-        has_annual_error = annual_data and isinstance(annual_data, dict) and annual_data.get("error")
-        has_weekly_error = weekly_data and isinstance(weekly_data, dict) and weekly_data.get("error")
-        
-        if has_annual_error and has_weekly_error:
+        if (annual_data and annual_data.get("error")) and (weekly_data and weekly_data.get("error")):
             await processing_message.edit_text(
                 "❌ *Ошибка при получении данных*\n\n"
                 f"Годовая сезонность: {annual_data.get('error', 'Неизвестная ошибка')}\n"
@@ -6647,89 +6645,6 @@ async def handle_seasonality_input(message: types.Message, state: FSMContext):
             )
             await state.clear()
             return
-        
-        # Если данные пустые, используем запасную функцию
-        if annual_empty and weekly_empty:
-            logger.info(f"Using fallback data for category: {category_path}")
-            
-            await processing_message.edit_text(
-                "🗓️ *Анализ сезонности*\n\n"
-                "✅ Этап 1: Получение данных годовой сезонности\n"
-                "✅ Этап 2: Получение данных недельной сезонности\n"
-                "⚠️ Этап 3: Данные API недоступны, использую аналитическую модель...",
-                parse_mode=ParseMode.MARKDOWN
-            )
-            
-            # Импортируем локально, чтобы избежать проблем с отсутствующим файлом
-            try:
-                from seasonality_fallback import get_fallback_seasonality_data, format_fallback_seasonality_analysis
-                
-                # Получаем запасные данные
-                fallback_data = await get_fallback_seasonality_data(category_path)
-                
-                if fallback_data:
-                    # Форматируем результаты запасного анализа
-                    formatted_results = format_fallback_seasonality_analysis(fallback_data, category_path)
-                    
-                    await processing_message.edit_text(
-                        "✅ *Анализ сезонности завершен!*\n\n"
-                        "Отправляю аналитический отчет...",
-                        parse_mode=ParseMode.MARKDOWN
-                    )
-                    
-                    # Отправляем результаты
-                    await message.answer(
-                        formatted_results,
-                        parse_mode=ParseMode.MARKDOWN,
-                        disable_web_page_preview=True
-                    )
-                    
-                    # Клавиатура для навигации
-                    final_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                        [
-                            InlineKeyboardButton(text="🔄 Новый анализ", callback_data="seasonality_analysis"),
-                            InlineKeyboardButton(text="◀️ В меню", callback_data="back_to_main")
-                        ]
-                    ])
-                    
-                    await message.answer(
-                        "✅ *Анализ сезонности завершен!*\n\nВыберите действие:",
-                        parse_mode=ParseMode.MARKDOWN,
-                        reply_markup=final_keyboard
-                    )
-                    
-                    await state.clear()
-                    subscription_manager.decrement_action_count(user_id, "niche_analysis")
-                    return
-                    
-            except ImportError:
-                logger.error("seasonality_fallback module not found")
-            except Exception as e:
-                logger.error(f"Error using fallback data: {str(e)}")
-            
-            # Если запасные данные не сработали
-            await processing_message.edit_text(
-                "❌ *Данные сезонности недоступны*\n\n"
-                "К сожалению, данные о сезонности для указанной категории недоступны.\n\n"
-                "Попробуйте:\n"
-                "• Другую категорию\n"
-                "• Более общий путь категории\n"
-                "• Повторить позже",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=back_keyboard()
-            )
-            await state.clear()
-            return
-        
-        # Если данные получены из API, продолжаем обычный процесс
-        await processing_message.edit_text(
-            "🗓️ *Анализ сезонности*\n\n"
-            "✅ Этап 1: Получение данных годовой сезонности\n"
-            "✅ Этап 2: Получение данных недельной сезонности\n"
-            "✅ Этап 3: Анализ данных\n"
-            "⏳ Этап 4: Создание графиков...",
-            parse_mode=ParseMode.MARKDOWN
-        )
         
         # Создаем графики
         chart_files = generate_seasonality_charts(annual_data, weekly_data, category_path)
@@ -6852,6 +6767,176 @@ async def handle_seasonality_analysis(callback_query: types.CallbackQuery, state
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=back_keyboard()
         )
+
+
+
+# ============ AI HELPER HANDLERS ============
+
+@dp.callback_query(lambda c: c.data == "ai_helper")
+async def handle_ai_helper_start(callback_query: types.CallbackQuery, state: FSMContext):
+    """Обработчик нажатия на кнопку AI помощника"""
+    try:
+        user_id = callback_query.from_user.id
+        
+        # Проверяем подписку и лимиты
+        can_perform = subscription_manager.can_perform_action(user_id, 'ai_generation')
+        if not can_perform:
+            await callback_query.message.edit_text(
+                "⚠️ У вас нет активной подписки или закончился лимит AI генераций.\n\n"
+                "Для получения доступа к AI помощнику перейдите в раздел подписок.",
+                reply_markup=main_menu_kb()
+            )
+            return
+        
+        # Меню выбора типа генерации
+        ai_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📝 Описание товара", callback_data="ai_product_description"),
+                InlineKeyboardButton(text="🎯 Карточка товара", callback_data="ai_product_card")
+            ],
+            [
+                InlineKeyboardButton(text="💰 Продающий текст", callback_data="ai_sales_text"),
+                InlineKeyboardButton(text="📢 Рекламное объявление", callback_data="ai_ad_copy")
+            ],
+            [
+                InlineKeyboardButton(text="📱 Пост для соцсетей", callback_data="ai_social_post"),
+                InlineKeyboardButton(text="📧 Email рассылка", callback_data="ai_email_marketing")
+            ],
+            [
+                InlineKeyboardButton(text="🌐 Лендинг страница", callback_data="ai_landing_page"),
+                InlineKeyboardButton(text="🔍 SEO контент", callback_data="ai_seo_content")
+            ],
+            [
+                InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_main")
+            ]
+        ])
+        
+        await callback_query.message.edit_text(
+            "🤖 *AI ПОМОЩНИК ДЛЯ КОНТЕНТА*\n\n"
+            "Выберите тип контента, который нужно создать:\n\n"
+            "📝 *Описание товара* - продающие описания для WB\n"
+            "🎯 *Карточка товара* - полное оформление карточки\n"
+            "💰 *Продающий текст* - тексты по формуле AIDA\n"
+            "📢 *Рекламное объявление* - креативы для рекламы\n"
+            "📱 *Пост для соцсетей* - контент для SMM\n"
+            "📧 *Email рассылка* - письма для клиентов\n"
+            "🌐 *Лендинг страница* - структура посадочной страницы\n"
+            "🔍 *SEO контент* - тексты для поисковой оптимизации\n\n"
+            f"💰 *Стоимость:* {COSTS['ai_generation']}₽ за генерацию",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=ai_keyboard
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in handle_ai_helper_start: {str(e)}", exc_info=True)
+        await callback_query.message.edit_text(
+            "❌ *Произошла ошибка*\n\n"
+            "Пожалуйста, попробуйте позже или обратитесь в поддержку.",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=back_keyboard()
+        )
+
+@dp.callback_query(lambda c: c.data.startswith("ai_") and c.data != "ai_helper")
+async def handle_ai_content_type(callback_query: types.CallbackQuery, state: FSMContext):
+    """Обработчик выбора типа AI контента"""
+    try:
+        content_type = callback_query.data.replace("ai_", "")
+        user_id = callback_query.from_user.id
+        
+        # Сохраняем тип контента в состоянии
+        await state.update_data(ai_content_type=content_type)
+        await state.set_state(UserStates.waiting_for_ai_input)
+        
+        await callback_query.message.edit_text(
+            f"🤖 *AI ГЕНЕРАЦИЯ: {content_type.upper()}*\n\n"
+            f"Опишите что нужно создать:\n"
+            f"• Укажите все детали и характеристики\n"
+            f"• Чем больше информации, тем лучше результат\n\n"
+            f"*Пример:* Зимние женские ботинки, натуральная кожа, размеры 36-41...",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=back_keyboard()
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in handle_ai_content_type: {str(e)}", exc_info=True)
+        await callback_query.message.edit_text(
+            "❌ *Произошла ошибка*\n\n"
+            "Пожалуйста, попробуйте позже.",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=back_keyboard()
+        )
+
+@dp.message(lambda message: message.text and message.text.strip(), UserStates.waiting_for_ai_input)
+async def handle_ai_input(message: types.Message, state: FSMContext):
+    """Обработчик ввода данных для AI генерации"""
+    try:
+        user_id = message.from_user.id
+        user_input = message.text.strip()
+        
+        # Получаем данные из состояния
+        data = await state.get_data()
+        content_type = data.get('ai_content_type')
+        
+        if not content_type:
+            await message.answer(
+                "❌ Ошибка: тип контента не определен. Пожалуйста, начните заново.",
+                reply_markup=back_keyboard()
+            )
+            await state.clear()
+            return
+        
+        # Проверяем баланс или безлимитную подписку  
+        success = subscription_manager.process_payment(user_id, COSTS['ai_generation'])
+        if not success:
+            await message.answer(
+                f"❌ Недостаточно средств для AI генерации.\n"
+                f"Необходимо: {COSTS['ai_generation']}₽\n\n"
+                "Пополните баланс или оформите подписку.",
+                reply_markup=back_keyboard()
+            )
+            await state.clear()
+            return
+        
+        # Отправляем сообщение о начале генерации
+        processing_message = await message.answer(
+            "🤖 *AI ГЕНЕРАЦИЯ КОНТЕНТА*\n\n"
+            "⏳ Анализирую запрос и генерирую контент...\n"
+            "Это займет 10-30 секунд...",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        
+        # Генерируем контент через настоящую нейросеть
+        generated_content = await generate_ai_content(content_type, user_input, OPENAI_API_KEY)
+        
+        # Удаляем сообщение о обработке
+        try:
+            await processing_message.delete()
+        except:
+            pass
+        
+        # Отправляем результат
+        await message.answer(generated_content)
+        
+        # Предлагаем меню
+        await message.answer(
+            "🎉 *Генерация завершена!*\n\nЧто хотите сделать дальше?",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=main_menu_kb()
+        )
+        
+        # Очищаем состояние
+        await state.clear()
+        
+    except Exception as e:
+        logger.error(f"Error in handle_ai_input: {str(e)}", exc_info=True)
+        await message.answer(
+            "❌ *Произошла ошибка при генерации контента*\n\n"
+            "Пожалуйста, попробуйте позже или обратитесь в поддержку.",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=back_keyboard()
+        )
+        await state.clear() 
+
 
 if __name__ == '__main__':
     asyncio.run(main()) 

@@ -395,40 +395,87 @@ class SubscriptionManager:
         return is_active
     
     def get_subscription_limits(self, user_id: int) -> dict:
-        logger.info(f"Getting subscription limits for user {user_id}")
-        subscription_type = self.get_subscription(user_id)
-        if not self.is_subscription_active(user_id):
-            logger.info(f"User {user_id} has no active subscription, returning zero limits")
+        """Возвращает лимиты действий для пользователя в зависимости от типа подписки"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT subscription_type, subscription_end 
+                FROM users 
+                WHERE user_id = ?
+            """, (user_id,))
+            
+            result = cursor.fetchone()
+            
+            if not result:
+                # Пользователь не зарегистрирован - базовые лимиты
+                return {
+                    'product_analysis': 3,
+                    'niche_analysis': 2,
+                    'seasonality_analysis': 2,
+                    'brand_analysis': 1,
+                    'global_search': 3,
+                    'external_analysis': 1,
+                    'ai_generation': 3
+                }
+            
+            subscription_type, end_date = result
+            
+            # Проверяем, активна ли подписка
+            if end_date:
+                try:
+                    # Пробуем парсить дату с временем
+                    end_datetime = datetime.strptime(end_date, '%Y-%m-%d %H:%M:%S')
+                except ValueError:
+                    try:
+                        # Если не получилось, пробуем парсить только дату
+                        end_datetime = datetime.strptime(end_date, '%Y-%m-%d')
+                    except ValueError:
+                        # Если и это не сработало, считаем подписку неактивной
+                        end_datetime = datetime.now() - timedelta(days=1)
+                
+                if end_datetime > datetime.now():
+                    if subscription_type == 'basic':
+                        return {
+                            'product_analysis': 20,
+                            'niche_analysis': 10,
+                            'seasonality_analysis': 10,
+                            'brand_analysis': 5,
+                            'global_search': 10,
+                            'external_analysis': 5,
+                            'ai_generation': 10
+                        }
+                    elif subscription_type == 'pro':
+                        return {
+                            'product_analysis': 50,
+                            'niche_analysis': 30,
+                            'seasonality_analysis': 25,
+                            'brand_analysis': 15,
+                            'global_search': 25,
+                            'external_analysis': 15,
+                            'ai_generation': 50
+                        }
+                    elif subscription_type == 'business':
+                        return {
+                            'product_analysis': float('inf'),
+                            'niche_analysis': float('inf'),
+                            'seasonality_analysis': float('inf'),
+                            'brand_analysis': float('inf'),
+                            'global_search': float('inf'),
+                            'external_analysis': float('inf'),
+                            'ai_generation': float('inf')
+                        }
+            
+            # Подписка неактивна или отсутствует - базовые лимиты
             return {
-                'product_analysis': 0,
-                'niche_analysis': 0,
-                'tracking_items': 0,
-                'brand_analysis': 0
+                'product_analysis': 3,
+                'niche_analysis': 2,
+                'seasonality_analysis': 2,
+                'brand_analysis': 1,
+                'global_search': 3,
+                'external_analysis': 1,
+                'ai_generation': 3
             }
-        
-        limits = {
-            'basic': {
-                'product_analysis': 50,
-                'niche_analysis': 20,
-                'tracking_items': 10,
-                'brand_analysis': 10
-            },
-            'pro': {
-                'product_analysis': float('inf'),
-                'niche_analysis': float('inf'),
-                'tracking_items': 50,
-                'brand_analysis': 50
-            },
-            'business': {
-                'product_analysis': float('inf'),
-                'niche_analysis': float('inf'),
-                'tracking_items': 200,
-                'brand_analysis': float('inf')
-            }
-        }
-        user_limits = limits.get(subscription_type, limits['basic'])
-        logger.info(f"User {user_id} limits: {user_limits}")
-        return user_limits
     
     def can_perform_action(self, user_id: int, action_type: str) -> bool:
         logger.info(f"Checking if user {user_id} can perform action: {action_type}")
@@ -660,4 +707,27 @@ class SubscriptionManager:
             return True
         except Exception as e:
             logger.error(f"Error updating tracked item: {e}")
+            return False 
+    
+    def process_payment(self, user_id: int, amount: float) -> bool:
+        """Обработка платежа - списание средств с баланса или проверка подписки"""
+        logger.info(f"Processing payment for user {user_id}, amount: {amount}₽")
+        
+        # Получаем лимиты подписки
+        limits = self.get_subscription_limits(user_id)
+        
+        # Если у пользователя безлимитная подписка (business), разрешаем без списания
+        if 'ai_generation' in limits and limits['ai_generation'] == float('inf'):
+            logger.info(f"User {user_id} has unlimited AI generation")
+            return True
+            
+        # Проверяем баланс
+        current_balance = self.get_user_balance(user_id)
+        if current_balance >= amount:
+            # Списываем средства
+            self.update_balance(user_id, -amount)
+            logger.info(f"Payment processed successfully for user {user_id}")
+            return True
+        else:
+            logger.info(f"Insufficient balance for user {user_id}: {current_balance} < {amount}")
             return False 
