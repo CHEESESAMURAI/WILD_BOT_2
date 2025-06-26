@@ -82,6 +82,7 @@ from brand_analysis import get_brand_info, format_brand_analysis
 from niche_analysis_functions import analyze_niche_with_mpstats, format_niche_analysis_result, generate_niche_analysis_charts
 
 from ai_generation import generate_ai_content
+import blogger_search
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
@@ -93,14 +94,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Инициализация бота и диспетчера
-BOT_TOKEN = "7984401479:AAHGKTVrRLxrJTuuehuGa4XsYmJ2bpCbe1U"  # Обновленный токен
-ADMIN_ID = 1659228199  # Замените на ваш ID в Telegram
-# Ключ для serper.dev API
-SERPER_API_KEY = "8ba851ed7ae1e6a655102bea15d73fdb39cdac79"
-# Обновляем API ключ
-OPENAI_API_KEY = "sk-YOUR_KEY_HERE"  # Замените на ваш OpenAI ключ
-MPSTATS_API_KEY = "68431d2ac72ea4.96910328a56006b24a55daf65db03835d5fe5b4d"  # Новый ключ MPSTATS API
+# Импорт конфигурации
+try:
+    from config import BOT_TOKEN, ADMIN_ID, SERPER_API_KEY, OPENAI_API_KEY, MPSTATS_API_KEY, YOUTUBE_API_KEY, VK_SERVICE_KEY
+except ImportError:
+    print("Ошибка: файл config.py не найден!")
+    print("Создайте файл config.py на основе config_example.py")
+    exit(1)
 
 storage = MemoryStorage()
 bot = Bot(token=BOT_TOKEN)
@@ -121,7 +121,8 @@ COSTS = {
     'global_search': 10,  # Добавляем стоимость глобального поиска
     'external_analysis': 15,  # Добавляем стоимость анализа внешней рекламы
     'seasonality_analysis': 25,  # Добавляем стоимость анализа сезонности
-    'ai_generation': 20  # Добавляем стоимость AI генерации
+    'ai_generation': 20,  # Добавляем стоимость AI генерации
+    'blogger_search': 30  # Добавляем стоимость поиска блогеров
 }
 
 # Стоимость подписок
@@ -169,6 +170,7 @@ class UserStates(StatesGroup):
     waiting_for_external = State()  # Состояние для ожидания ввода товара/артикула для анализа внешки
     waiting_for_ai_input = State()  # Состояние для ожидания ввода для AI помощника
     waiting_for_seasonality = State()  # Состояние для ожидания ввода категории для анализа сезонности
+    waiting_for_blogger_search = State()  # Состояние для ожидания ввода для поиска блогеров
 
 # Приветственное сообщение
 WELCOME_MESSAGE = (
@@ -222,7 +224,8 @@ def main_menu_kb():
             InlineKeyboardButton(text="📊 Статистика", callback_data="stats")
         ],
         [
-            InlineKeyboardButton(text="🤖 Помощь с нейронкой", callback_data="ai_helper")
+            InlineKeyboardButton(text="🤖 Помощь с нейронкой", callback_data="ai_helper"),
+            InlineKeyboardButton(text="👥 Поиск блогеров", callback_data="blogger_search")
         ],
         [
             InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")
@@ -271,13 +274,26 @@ async def help_callback(callback_query: types.CallbackQuery):
         "   • Введите путь к категории товаров\n"
         "   • Получите данные о годовой и недельной сезонности\n"
         "   • Узнайте лучшие периоды для продаж\n\n"
+        "*7. Поиск блогеров:*\n"
+        "   • Введите артикул товара / ключевое слово / категорию\n"
+        "   • (опционально) Бюджет или формат сотрудничества (бартер / оплата)\n"
+        "   • Бот ищет блогеров по YouTube, TikTok, Instagram, Telegram\n"
+        "   • Указанным тегам / названиям брендов / артикулу\n"
+        "   • Названию товара / ниши\n"
+        "   • Для каждого найденного блогера:\n"
+        "     📸 Имя + ник (ссылка)\n"
+        "     📱 Платформа (Instagram / TikTok / YouTube / Telegram)\n"
+        "     👥 Аудитория (примерно): кол-во подписчиков, просмотры\n"
+        "     💬 Тематика: мода, косметика, детские товары и т.п.\n"
+        "     🔗 Примеры постов с товарами WB (если есть)\n"
         "*Стоимость операций:*\n"
         f"• Анализ товара: {COSTS['product_analysis']}₽\n"
         f"• Анализ тренда: {COSTS['trend_analysis']}₽\n"
         f"• Анализ ниши: {COSTS['niche_analysis']}₽\n"
         f"• Анализ внешки: {COSTS['external_analysis']}₽\n"
         f"• Отслеживание: {COSTS['tracking']}₽\n"
-        f"• Анализ сезонности: {COSTS['seasonality_analysis']}₽"
+        f"• Анализ сезонности: {COSTS['seasonality_analysis']}₽\n"
+        f"• Поиск блогеров: {COSTS['blogger_search']}₽"
     )
     await callback_query.message.edit_text(
         help_text,
@@ -725,13 +741,26 @@ async def help_handler(message: types.Message):
         "   • Введите путь к категории товаров\n"
         "   • Получите данные о годовой и недельной сезонности\n"
         "   • Узнайте лучшие периоды для продаж\n\n"
+        "*7. Поиск блогеров:*\n"
+        "   • Введите артикул товара / ключевое слово / категорию\n"
+        "   • (опционально) Бюджет или формат сотрудничества (бартер / оплата)\n"
+        "   • Бот ищет блогеров по YouTube, TikTok, Instagram, Telegram\n"
+        "   • Указанным тегам / названиям брендов / артикулу\n"
+        "   • Названию товара / ниши\n"
+        "   • Для каждого найденного блогера:\n"
+        "     📸 Имя + ник (ссылка)\n"
+        "     📱 Платформа (Instagram / TikTok / YouTube / Telegram)\n"
+        "     👥 Аудитория (примерно): кол-во подписчиков, просмотры\n"
+        "     💬 Тематика: мода, косметика, детские товары и т.п.\n"
+        "     🔗 Примеры постов с товарами WB (если есть)\n"
         "*Стоимость операций:*\n"
         f"• Анализ товара: {COSTS['product_analysis']}₽\n"
         f"• Анализ тренда: {COSTS['trend_analysis']}₽\n"
         f"• Анализ ниши: {COSTS['niche_analysis']}₽\n"
         f"• Анализ внешки: {COSTS['external_analysis']}₽\n"
         f"• Отслеживание: {COSTS['tracking']}₽\n"
-        f"• Анализ сезонности: {COSTS['seasonality_analysis']}₽"
+        f"• Анализ сезонности: {COSTS['seasonality_analysis']}₽\n"
+        f"• Поиск блогеров: {COSTS['blogger_search']}₽"
     )
     await message.answer(help_text, parse_mode=ParseMode.MARKDOWN)
 
@@ -994,7 +1023,7 @@ def extract_likes_views(snippet):
     return likes, views
 
 # --- YouTube ---
-YOUTUBE_API_KEY = 'AIzaSyD-epfqmQhkKJcjy_V3nP93VniUIGEb3Sc'
+# YOUTUBE_API_KEY импортируется из config.py
 def get_youtube_likes_views(url):
     """Получить лайки и просмотры с YouTube по ссылке на видео."""
     # Пример ссылки: https://www.youtube.com/watch?v=VIDEO_ID
@@ -1564,6 +1593,7 @@ from reportlab.graphics.charts.linecharts import HorizontalLineChart
 from reportlab.graphics.charts.barcharts import VerticalBarChart
 from brand_analysis import get_brand_info, format_brand_analysis
 from niche_analysis_functions import analyze_niche_with_mpstats, format_niche_analysis_result, generate_niche_analysis_charts
+import blogger_search
 
 # Настройка логирования
 logging.basicConfig(
@@ -1576,13 +1606,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Инициализация бота и диспетчера
-BOT_TOKEN = "7984401479:AAHGKTVrRLxrJTuuehuGa4XsYmJ2bpCbe1U"  # Обновленный токен
-ADMIN_ID = 1659228199  # Замените на ваш ID в Telegram
-# Ключ для serper.dev API
-SERPER_API_KEY = "8ba851ed7ae1e6a655102bea15d73fdb39cdac79"
-# Обновляем API ключ
-MPSTATS_API_KEY = "68431d2ac72ea4.96910328a56006b24a55daf65db03835d5fe5b4d"  # Новый ключ MPSTATS API
+# Импорт конфигурации
+try:
+    from config import BOT_TOKEN, ADMIN_ID, SERPER_API_KEY, OPENAI_API_KEY, MPSTATS_API_KEY, YOUTUBE_API_KEY, VK_SERVICE_KEY
+except ImportError:
+    print("Ошибка: файл config.py не найден!")
+    print("Создайте файл config.py на основе config_example.py")
+    exit(1)
 
 storage = MemoryStorage()
 bot = Bot(token=BOT_TOKEN)
@@ -1603,7 +1633,8 @@ COSTS = {
     'global_search': 10,  # Добавляем стоимость глобального поиска
     'external_analysis': 15,  # Добавляем стоимость анализа внешней рекламы
     'seasonality_analysis': 25,  # Добавляем стоимость анализа сезонности
-    'ai_generation': 20  # Добавляем стоимость AI генерации
+    'ai_generation': 20,  # Добавляем стоимость AI генерации
+    'blogger_search': 30  # Добавляем стоимость поиска блогеров
 }
 
 # Стоимость подписок
@@ -1651,6 +1682,7 @@ class UserStates(StatesGroup):
     waiting_for_external = State()  # Состояние для ожидания ввода товара/артикула для анализа внешки
     waiting_for_ai_input = State()  # Состояние для ожидания ввода для AI помощника
     waiting_for_seasonality = State()  # Состояние для ожидания ввода категории для анализа сезонности
+    waiting_for_blogger_search = State()  # Состояние для ожидания ввода для поиска блогеров
 
 # Приветственное сообщение
 WELCOME_MESSAGE = (
@@ -1707,6 +1739,9 @@ def main_menu_kb():
             InlineKeyboardButton(text="🤖 Помощь с нейронкой", callback_data="ai_helper")
         ],
         [
+            InlineKeyboardButton(text="👥 Поиск блогеров", callback_data="blogger_search")
+        ],
+        [
             InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")
         ]
     ])
@@ -1753,6 +1788,9 @@ async def help_callback(callback_query: types.CallbackQuery):
         "   • Введите путь к категории товаров\n"
         "   • Получите данные о годовой и недельной сезонности\n"
         "   • Узнайте лучшие периоды для продаж\n\n"
+        "*7. Поиск блогеров:*\n"
+        "   • Введите артикул товара / ключевое слово / категорию\n"
+        "   • Получите список подходящих блогеров с контактами и статистикой\n\n"
         "*Стоимость операций:*\n"
         f"• Анализ товара: {COSTS['product_analysis']}₽\n"
         f"• Анализ тренда: {COSTS['trend_analysis']}₽\n"
@@ -2476,7 +2514,7 @@ def extract_likes_views(snippet):
     return likes, views
 
 # --- YouTube ---
-YOUTUBE_API_KEY = 'AIzaSyD-epfqmQhkKJcjy_V3nP93VniUIGEb3Sc'
+# YOUTUBE_API_KEY импортируется из config.py
 def get_youtube_likes_views(url):
     """Получить лайки и просмотры с YouTube по ссылке на видео."""
     # Пример ссылки: https://www.youtube.com/watch?v=VIDEO_ID
@@ -6936,6 +6974,174 @@ async def handle_ai_input(message: types.Message, state: FSMContext):
             reply_markup=back_keyboard()
         )
         await state.clear() 
+
+# ============ BLOGGER SEARCH HANDLERS ============
+
+@dp.callback_query(lambda c: c.data == "blogger_search")
+async def handle_blogger_search(callback_query: types.CallbackQuery, state: FSMContext):
+    """Обработчик нажатия на кнопку поиска блогеров"""
+    try:
+        user_id = callback_query.from_user.id
+        
+        # Проверяем баланс
+        balance = subscription_manager.get_user_balance(user_id)
+        cost = COSTS.get('blogger_search', 30)
+        
+        if balance < cost:
+            await callback_query.message.edit_text(
+                f"💰 *Недостаточно средств*\n\n"
+                f"Для поиска блогеров необходимо: {cost}₽\n"
+                f"Ваш баланс: {balance}₽\n\n"
+                f"Пополните баланс для продолжения.",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="add_funds")],
+                    [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_main")]
+                ])
+            )
+            return
+        
+        # Устанавливаем состояние ожидания ввода
+        await state.set_state(UserStates.waiting_for_blogger_search)
+        
+        # Отправляем сообщение с инструкцией
+        await callback_query.message.edit_text(
+            "👥 *ПОИСК БЛОГЕРОВ*\n\n"
+            "Введите данные для поиска подходящих блогеров:\n\n"
+            "📝 *Что можно указать:*\n"
+            "• Артикул товара WB\n"
+            "• Ключевое слово или категория\n"
+            "• Название бренда\n"
+            "• Тематику (мода, красота, дети и т.д.)\n\n"
+            "🔍 *Что найду:*\n"
+            "• YouTube, Instagram, TikTok, Telegram\n"
+            "• Размер аудитории и активность\n"
+            "• Примерный бюджет сотрудничества\n"
+            "• Контактные данные (если доступны)\n"
+            "• Наличие контента о Wildberries\n\n"
+            "*Примеры запросов:*\n"
+            "• `Женская обувь`\n"
+            "• `Детские игрушки`\n"
+            "• `123456789` (артикул)\n"
+            "• `Косметика для лица`\n\n"
+            f"💰 *Стоимость анализа: {cost}₽*",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=back_keyboard()
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in handle_blogger_search: {str(e)}", exc_info=True)
+        await callback_query.message.edit_text(
+            "❌ *Произошла ошибка*\n\n"
+            "Пожалуйста, попробуйте позже или обратитесь в поддержку.",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=back_keyboard()
+        )
+
+@dp.message(lambda message: message.text and message.text.strip(), UserStates.waiting_for_blogger_search)
+async def handle_blogger_search_input(message: types.Message, state: FSMContext):
+    """Обработчик ввода запроса для поиска блогеров"""
+    try:
+        user_id = message.from_user.id
+        query = message.text.strip()
+        cost = COSTS.get('blogger_search', 30)
+        
+        # Проверяем и списываем средства
+        success = subscription_manager.process_payment(user_id, cost)
+        if not success:
+            await message.answer(
+                f"❌ Недостаточно средств для анализа.\n"
+                f"Необходимо: {cost}₽\n\n"
+                "Пополните баланс для продолжения.",
+                reply_markup=back_keyboard()
+            )
+            await state.clear()
+            return
+        
+        # Отправляем сообщение о начале поиска
+        processing_message = await message.answer(
+            "🔍 *ПОИСК БЛОГЕРОВ*\n\n"
+            f"⏳ Ищу блогеров по запросу: `{query}`\n\n"
+            "Анализирую:\n"
+            "• 📺 YouTube каналы\n"
+            "• 📱 Instagram профили\n"
+            "• 🎵 TikTok аккаунты\n"
+            "• 💬 Telegram каналы\n\n"
+            "Это займет 30-60 секунд...",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        
+        # Выполняем поиск блогеров
+        search_results = await blogger_search.search_bloggers_by_query(query)
+        
+        # Удаляем сообщение о обработке
+        try:
+            await processing_message.delete()
+        except:
+            pass
+        
+        # Форматируем и отправляем результаты
+        result_text = blogger_search.format_blogger_search_results(search_results)
+        
+        # Отправляем результат (разбиваем на части если очень длинный)
+        max_length = 4000
+        if len(result_text) > max_length:
+            # Разбиваем текст на части
+            parts = []
+            current_part = ""
+            
+            lines = result_text.split('\n')
+            for line in lines:
+                if len(current_part + line + '\n') > max_length:
+                    if current_part:
+                        parts.append(current_part.strip())
+                        current_part = line + '\n'
+                    else:
+                        parts.append(line)
+                else:
+                    current_part += line + '\n'
+            
+            if current_part.strip():
+                parts.append(current_part.strip())
+            
+            # Отправляем по частям
+            for i, part in enumerate(parts):
+                if i == 0:
+                    await message.answer(part, parse_mode=ParseMode.MARKDOWN)
+                else:
+                    await message.answer(f"*Продолжение {i + 1}:*\n\n{part}", parse_mode=ParseMode.MARKDOWN)
+        else:
+            await message.answer(result_text, parse_mode=ParseMode.MARKDOWN)
+        
+        # Предлагаем меню
+        await message.answer(
+            "🎉 *Поиск блогеров завершен!*\n\n"
+            "💡 *Рекомендации:*\n"
+            "• Обращайтесь к блогерам с ✅ - у них есть опыт с WB\n"
+            "• Учитывайте размер аудитории и активность\n"
+            "• Начинайте с микро-блогеров для тестирования\n"
+            "• Предлагайте бартер новым авторам\n\n"
+            "Что хотите сделать дальше?",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=main_menu_kb()
+        )
+        
+        # Очищаем состояние
+        await state.clear()
+        
+    except Exception as e:
+        logger.error(f"Error in handle_blogger_search_input: {str(e)}", exc_info=True)
+        await message.answer(
+            "❌ *Произошла ошибка при поиске блогеров*\n\n"
+            "Возможные причины:\n"
+            "• Временные проблемы с API\n"
+            "• Некорректный запрос\n"
+            "• Проблемы с интернет-соединением\n\n"
+            "Попробуйте еще раз через несколько минут.",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=back_keyboard()
+        )
+        await state.clear()
 
 
 if __name__ == '__main__':
