@@ -1,10 +1,13 @@
 import logging
 import requests
+import asyncio
+import aiohttp
 from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 import numpy as np
 import hashlib
 import random
+from mpstats_browser_utils import get_mpstats_headers, mpstats_api_request
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -14,45 +17,41 @@ logger = logging.getLogger(__name__)
 MPSTAT_API_KEY = "68431d2ac72ea4.96910328a56006b24a55daf65db03835d5fe5b4d"
 
 async def get_brand_info(brand_name):
-    """Получает информацию о бренде из MPSTAT API или Wildberries API."""
+    """Получает информацию о бренде из MPSTAT API или Wildberries API с браузерным подходом."""
     try:
         if not brand_name:
             logger.error("Не указано название бренда")
             return None
             
-        logger.info(f"Getting brand info for {brand_name}")
+        logger.info(f"Getting brand info for {brand_name} (browser approach)")
         
-        # Сначала пробуем получить данные от MPSTAT API
-        mpstat_info = await get_brand_info_mpstat(brand_name)
+        # Сначала пробуем получить данные от MPSTAT API с браузерным подходом
+        mpstat_info = await get_brand_info_mpstat_browser(brand_name)
         if mpstat_info:
-            logger.info(f"Получены данные о бренде {brand_name} из MPSTAT API")
+            logger.info(f"✅ Получены данные о бренде {brand_name} из MPSTAT API")
             return mpstat_info
             
         # Если MPSTAT недоступен, пробуем получить данные из Wildberries API
         wb_info = await get_brand_info_wb(brand_name)
         if wb_info:
-            logger.info(f"Получены данные о бренде {brand_name} из Wildberries API")
+            logger.info(f"✅ Получены данные о бренде {brand_name} из Wildberries API")
             return wb_info
             
-        # Если оба API недоступны, возвращаем None
-        logger.error(f"Не удалось получить информацию о бренде {brand_name} из обоих API")
-        return None
+        # Если оба API недоступны, возвращаем заглушку
+        logger.warning(f"⚠️ Не удалось получить информацию о бренде {brand_name}, используем заглушку")
+        return generate_placeholder_brand_info(brand_name)
         
     except Exception as e:
-        logger.error(f"Ошибка при получении информации о бренде: {str(e)}", exc_info=True)
-        return None
+        logger.error(f"❌ Ошибка при получении информации о бренде: {str(e)}", exc_info=True)
+        return generate_placeholder_brand_info(brand_name)
 
-async def get_brand_info_mpstat(brand_name):
-    """Получает информацию о бренде из MPSTAT API."""
+async def get_brand_info_mpstat_browser(brand_name):
+    """Получает информацию о бренде из MPSTAT API с браузерным подходом."""
     try:
-        # Запрос данных о бренде
-        url = f"https://mpstats.io/api/wb/get/brands"
-        headers = {
-            "X-Mpstats-TOKEN": MPSTAT_API_KEY,
-            "Content-Type": "application/json"
-        }
+        logger.info(f"Trying MPSTATS API for brand: {brand_name}")
         
-        # Параметры запроса
+        # Используем браузерный подход
+        url = "https://mpstats.io/api/wb/get/brands"
         params = {
             "path": "/brands",  # Обязательный параметр path
             "startRow": 0,
@@ -60,10 +59,11 @@ async def get_brand_info_mpstat(brand_name):
             "query": brand_name
         }
         
-        response = requests.get(url, headers=headers, params=params, timeout=10)
+        # Используем браузерную функцию
+        brands_data = await mpstats_api_request(url, params)
         
-        if response.status_code == 200:
-            brands_data = response.json()
+        if brands_data and brands_data.get('data'):
+            logger.info(f"✅ Received brand data from MPSTATS API")
             
             # Ищем точное совпадение по имени бренда
             brand_info = None
@@ -92,10 +92,67 @@ async def get_brand_info_mpstat(brand_name):
                     'items_stats': []
                 }
                 
+                logger.info(f"✅ Processed brand data: {result['total_items']} items, {result['avg_price']} avg price")
                 return result
         
-        logger.error(f"MPSTAT API error when getting brand info: {response.status_code} - {response.text}")
+        logger.warning(f"⚠️ No brand data received from MPSTATS API for {brand_name}")
         return None
+            
+    except Exception as e:
+        logger.error(f"❌ MPSTATS request error: {str(e)}")
+        return None
+
+async def get_brand_info_mpstat_legacy(brand_name):
+    """Legacy метод получения информации о бренде из MPSTAT API (для совместимости)."""
+    try:
+        # Запрос данных о бренде
+        url = f"https://mpstats.io/api/wb/get/brands"
+        headers = get_mpstats_headers()
+        
+        # Параметры запроса
+        params = {
+            "path": "/brands",  # Обязательный параметр path
+            "startRow": 0,
+            "endRow": 10,
+            "query": brand_name
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, params=params, timeout=10) as response:
+                if response.status == 200:
+                    brands_data = await response.json()
+                    
+                    # Ищем точное совпадение по имени бренда
+                    brand_info = None
+                    for brand in brands_data.get('data', []):
+                        if brand.get('title', '').lower() == brand_name.lower():
+                            brand_info = brand
+                            break
+                    
+                    # Если не нашли точное совпадение, берем первый результат
+                    if not brand_info and brands_data.get('data'):
+                        brand_info = brands_data['data'][0]
+                    
+                    if brand_info:
+                        # Формируем информацию о бренде
+                        result = {
+                            'name': brand_name,
+                            'total_items': brand_info.get('itemsCount', 0),
+                            'avg_price': brand_info.get('avgPrice', 0),
+                            'avg_rating': brand_info.get('rating', 0),
+                            'total_sales': brand_info.get('salesCount', 0),
+                            'total_revenue': brand_info.get('revenue', 0),
+                            'category_position': brand_info.get('position', 0),
+                            'categories': brand_info.get('categories', []),
+                            'competitors': [],
+                            'sales_dynamics': [],
+                            'items_stats': []
+                        }
+                        
+                        return result
+                
+                logger.error(f"MPSTAT API error when getting brand info: {response.status} - {await response.text()}")
+                return None
             
     except Exception as e:
         logger.error(f"MPSTAT request error: {str(e)}")

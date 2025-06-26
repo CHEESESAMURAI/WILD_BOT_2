@@ -7,6 +7,13 @@ import aiohttp
 from datetime import datetime, timedelta
 import asyncio
 import json
+from mpstats_browser_utils import (
+    get_mpstats_headers, 
+    mpstats_api_request, 
+    get_category_data_browser,
+    format_date_for_mpstats,
+    get_date_range_30_days
+)
 
 # Настройка matplotlib для русского языка
 plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial Unicode MS', 'Times New Roman']
@@ -843,57 +850,67 @@ def generate_keyword_charts(niche_data):
         return []
 
 async def get_mpstats_category_data_new(category_path, days=30):
-    """Получает данные о категории из MPSTATS API"""
+    """Получает данные о категории из MPSTATS API с браузерным подходом"""
     try:
-        # Вычисляем даты для анализа
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=days)
+        logger.info(f"Getting category data for {category_path} with browser approach")
         
-        date_format = "%Y-%m-%d"
-        d1 = start_date.strftime(date_format)
-        d2 = end_date.strftime(date_format)
+        # Используем браузерный подход для получения дат
+        d1, d2 = get_date_range_30_days()
         
-        # Формируем URL для запроса
-        url = f"https://mpstats.io/api/wb/get/category/subcategories"
+        # Пробуем использовать браузерную функцию
+        data = await get_category_data_browser(category_path, d1, d2)
         
-        params = {
-            "path": category_path,
-            "d1": d1,
-            "d2": d2,
-            "fbs": "1"
-        }
-        
-        headers = {
-            "X-Mpstats-TOKEN": MPSTATS_API_KEY,
-            "Content-Type": "application/json"
-        }
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, headers=headers) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    
-                    if data and isinstance(data, list):
-                        # Обрабатываем данные категории
-                        return {
-                            "query": category_path,
-                            "is_category": True,
-                            "category_data": data,
-                            "total_categories": len(data),
-                            "period_days": days,
-                            "start_date": d1,
-                            "end_date": d2
-                        }
-                    else:
-                        return {"error": "Категория не найдена или нет данных"}
+        if data:
+            logger.info(f"✅ Category data received via browser approach")
+            return {
+                "query": category_path,
+                "is_category": True,
+                "category_data": data,
+                "total_categories": len(data) if isinstance(data, list) else 1,
+                "period_days": days,
+                "start_date": d1,
+                "end_date": d2
+            }
+        else:
+            # Fallback к legacy методу
+            logger.warning(f"⚠️ Browser approach failed, trying legacy method...")
+            
+            url = f"https://mpstats.io/api/wb/get/category/subcategories"
+            params = {
+                "path": category_path,
+                "d1": d1,
+                "d2": d2,
+                "fbs": "1"
+            }
+            
+            headers = get_mpstats_headers()
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params, headers=headers) as response:
+                    if response.status == 200:
+                        data = await response.json()
                         
-                else:
-                    error_text = await response.text()
-                    logger.error(f"MPSTATS API error: {response.status} - {error_text}")
-                    return {"error": f"Ошибка API MPSTATS: {response.status}"}
+                        if data and isinstance(data, list):
+                            logger.info(f"✅ Legacy category data received")
+                            return {
+                                "query": category_path,
+                                "is_category": True,
+                                "category_data": data,
+                                "total_categories": len(data),
+                                "period_days": days,
+                                "start_date": d1,
+                                "end_date": d2
+                            }
+                        else:
+                            return {"error": "Категория не найдена или нет данных"}
+                            
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"❌ MPSTATS API error: {response.status} - {error_text}")
+                        return {"error": f"Ошибка API MPSTATS: {response.status}"}
                     
     except Exception as e:
-        logger.error(f"Error getting category data: {str(e)}")
+        logger.error(f"❌ Error getting category data: {str(e)}")
         return {"error": f"Ошибка при получении данных категории: {str(e)}"}
 
 async def analyze_niche_with_mpstats(query):

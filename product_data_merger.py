@@ -4,9 +4,11 @@ import asyncio
 from product_mpstat import get_product_mpstat_info
 from wb_product_info import get_wb_product_info
 import requests
+import aiohttp
 from datetime import datetime, timedelta
 import random
 from brand_analysis import get_brand_info  # Импортируем функцию из brand_analysis.py
+from mpstats_browser_utils import get_mpstats_headers, mpstats_api_request, get_item_sales_browser
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -219,20 +221,36 @@ async def get_search_ads_data(article):
     }
 
 async def get_daily_data(article):
-    """Получает данные по дням для построения графиков из MPSTAT API."""
+    """Получает данные по дням для построения графиков из MPSTAT API с браузерным подходом."""
     try:
-        # Делаем запрос к MPSTAT API для получения исторических данных
-        mpstat_api_key = "68431d2ac72ea4.96910328a56006b24a55daf65db03835d5fe5b4d"
+        from mpstats_browser_utils import get_date_range_30_days
         
-        # Запрос исторических данных по продажам за последние 30 дней
-        url = f"https://mpstats.io/api/wb/get/item/{article}/sales"
-        headers = {
-            "X-Mpstats-TOKEN": mpstat_api_key,
-            "Content-Type": "application/json"
-        }
+        logger.info(f"Getting historical sales data from MPSTAT API (browser approach) for article {article}")
         
-        logger.info(f"Getting historical sales data from MPSTAT API for article {article}")
-        response = requests.get(url, headers=headers, timeout=10)
+        # Получаем диапазон дат для браузерного подхода
+        date_from, date_to = get_date_range_30_days()
+        
+        # Используем браузерный подход для получения данных о продажах
+        sales_data = await get_item_sales_browser(article, date_from, date_to)
+        
+        if sales_data:
+            logger.info(f"✅ Historical sales data received via browser approach for article {article}")
+        else:
+            logger.warning(f"⚠️ No sales data from browser approach, trying legacy method...")
+            
+            # Fallback к legacy методу
+            headers = get_mpstats_headers()
+            
+            async with aiohttp.ClientSession() as session:
+                url = f"https://mpstats.io/api/wb/get/item/{article}/sales"
+                params = {"d1": date_from, "d2": date_to}
+                
+                async with session.get(url, headers=headers, params=params, timeout=10) as response:
+                    if response.status == 200:
+                        sales_data = await response.json()
+                        logger.info(f"✅ Legacy sales data received for article {article}")
+                    else:
+                        logger.warning(f"⚠️ Legacy sales request failed: {response.status}")
         
         if response.status_code == 200:
             sales_data = response.json()

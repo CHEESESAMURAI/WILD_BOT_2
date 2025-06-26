@@ -83,6 +83,7 @@ from niche_analysis_functions import analyze_niche_with_mpstats, format_niche_an
 
 from ai_generation import generate_ai_content
 import blogger_search
+from oracle_queries import OracleQueries, format_oracle_results
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
@@ -111,6 +112,8 @@ product_analyzer = ProductCardAnalyzer()
 trend_analyzer = TrendAnalyzer()
 niche_analyzer = NicheAnalyzer()
 subscription_manager = SubscriptionManager()
+oracle_analyzer = OracleQueries()
+oracle = oracle_analyzer  # Для совместимости с обработчиками
 
 # Стоимость операций
 COSTS = {
@@ -122,7 +125,8 @@ COSTS = {
     'external_analysis': 15,  # Добавляем стоимость анализа внешней рекламы
     'seasonality_analysis': 25,  # Добавляем стоимость анализа сезонности
     'ai_generation': 20,  # Добавляем стоимость AI генерации
-    'blogger_search': 30  # Добавляем стоимость поиска блогеров
+    'blogger_search': 30,  # Добавляем стоимость поиска блогеров
+    'oracle_queries': 50  # Добавляем стоимость оракула запросов
 }
 
 # Стоимость подписок
@@ -171,6 +175,8 @@ class UserStates(StatesGroup):
     waiting_for_ai_input = State()  # Состояние для ожидания ввода для AI помощника
     waiting_for_seasonality = State()  # Состояние для ожидания ввода категории для анализа сезонности
     waiting_for_blogger_search = State()  # Состояние для ожидания ввода для поиска блогеров
+    waiting_for_oracle_queries = State()  # Состояние для ожидания ввода запросов Оракула
+    waiting_for_oracle_category = State()  # Состояние для ожидания ввода категории Оракула
 
 # Приветственное сообщение
 WELCOME_MESSAGE = (
@@ -228,6 +234,7 @@ def main_menu_kb():
             InlineKeyboardButton(text="👥 Поиск блогеров", callback_data="blogger_search")
         ],
         [
+            InlineKeyboardButton(text="🔮 Оракул запросов", callback_data="oracle_queries"),
             InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")
         ]
     ])
@@ -1613,286 +1620,6 @@ except ImportError:
     print("Ошибка: файл config.py не найден!")
     print("Создайте файл config.py на основе config_example.py")
     exit(1)
-
-storage = MemoryStorage()
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(storage=storage)
-
-# Инициализация анализаторов и менеджеров
-product_analyzer = ProductCardAnalyzer()
-trend_analyzer = TrendAnalyzer()
-niche_analyzer = NicheAnalyzer()
-subscription_manager = SubscriptionManager()
-
-# Стоимость операций
-COSTS = {
-    'product_analysis': 10,  # рублей
-    'trend_analysis': 15,
-    'niche_analysis': 20,
-    'tracking': 5,
-    'global_search': 10,  # Добавляем стоимость глобального поиска
-    'external_analysis': 15,  # Добавляем стоимость анализа внешней рекламы
-    'seasonality_analysis': 25,  # Добавляем стоимость анализа сезонности
-    'ai_generation': 20,  # Добавляем стоимость AI генерации
-    'blogger_search': 30  # Добавляем стоимость поиска блогеров
-}
-
-# Стоимость подписок
-SUBSCRIPTION_COSTS = {
-    'basic': 1000,
-    'pro': 2500,
-    'business': 5000
-}
-
-# Лимиты действий для разных типов подписок
-SUBSCRIPTION_LIMITS = {
-    'basic': {
-        'product_analysis': 10,
-        'niche_analysis': 5,
-        'tracking_items': 10,
-        'global_search': 20,
-        'brand_analysis': float('inf')
-    },
-    'pro': {
-        'product_analysis': 50,
-        'niche_analysis': 20,
-        'tracking_items': 50,
-        'global_search': 100,
-        'brand_analysis': float('inf')
-    },
-    'business': {
-        'product_analysis': float('inf'),
-        'niche_analysis': float('inf'),
-        'tracking_items': 200,
-        'global_search': float('inf'),
-        'brand_analysis': float('inf')
-    }
-}
-
-# Состояния FSM
-class UserStates(StatesGroup):
-    waiting_for_product = State()
-    waiting_for_niche = State()
-    waiting_for_tracking = State()
-    waiting_for_payment_amount = State()
-    waiting_for_payment_screenshot = State()
-    waiting_for_search = State()
-    viewing_search_results = State()
-    waiting_for_brand = State()  # Состояние для ожидания ввода бренда
-    waiting_for_external = State()  # Состояние для ожидания ввода товара/артикула для анализа внешки
-    waiting_for_ai_input = State()  # Состояние для ожидания ввода для AI помощника
-    waiting_for_seasonality = State()  # Состояние для ожидания ввода категории для анализа сезонности
-    waiting_for_blogger_search = State()  # Состояние для ожидания ввода для поиска блогеров
-
-# Приветственное сообщение
-WELCOME_MESSAGE = (
-    "✨👋 *Добро пожаловать в WHITESAMURAI!* ✨\n\n"
-    "Я — ваш цифровой самурай и эксперт по Wildberries!\n"
-    "\n"
-    "🔎 *Что я умею?*\n"
-    "• 📈 Анализирую товары и ниши\n"
-    "• 💡 Даю персональные рекомендации\n"
-    "• 🏆 Помогаю находить тренды и прибыльные идеи\n"
-    "• 📊 Отслеживаю продажи и остатки\n"
-    "• 🌐 Ищу упоминания в соцсетях\n"
-    "• 📝 Формирую понятные отчёты\n"
-    "\n"
-    "*Команды для быстрого старта:*\n"
-    "▫️ /start — Главное меню\n"
-    "▫️ /help — Справка и советы\n"
-    "▫️ /balance — Баланс и пополнение\n"
-    "▫️ /profile — Личный кабинет\n"
-    "\n"
-    "⚡️ *Вдохновляйтесь, анализируйте, побеждайте!*\n"
-    "Ваш успех — моя миссия.\n\n"
-    "👇 *Выберите функцию в меню ниже и начните свой путь к вершинам продаж!* 🚀"
-)
-
-# Клавиатура основного меню
-def main_menu_kb():
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="📊 Анализ товара", callback_data="product_analysis"),
-            InlineKeyboardButton(text="📈 Анализ ниши", callback_data="niche_analysis")
-        ],
-        [
-            InlineKeyboardButton(text="🏢 Анализ бренда", callback_data="brand_analysis"),
-            InlineKeyboardButton(text="🔍 Анализ внешки", callback_data="external_analysis")
-        ],
-        [
-            InlineKeyboardButton(text="🌐 Глобальный поиск", callback_data="product_search"),
-            InlineKeyboardButton(text="📱 Отслеживание", callback_data="track_item")
-        ],
-        [
-            InlineKeyboardButton(text="📦 Отслеживаемые", callback_data="tracked"),
-            InlineKeyboardButton(text="👤 Личный кабинет", callback_data="profile")
-        ],
-        [
-            InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="add_funds"),
-            InlineKeyboardButton(text="📅 Подписка", callback_data="subscription")
-        ],
-        [
-            InlineKeyboardButton(text="🗓️ Анализ сезонности", callback_data="seasonality_analysis"),
-            InlineKeyboardButton(text="📊 Статистика", callback_data="stats")
-        ],
-        [
-            InlineKeyboardButton(text="🤖 Помощь с нейронкой", callback_data="ai_helper")
-        ],
-        [
-            InlineKeyboardButton(text="👥 Поиск блогеров", callback_data="blogger_search")
-        ],
-        [
-            InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")
-        ]
-    ])
-    return keyboard
-
-# Клавиатура "Назад"
-def back_keyboard():
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_main")]
-    ])
-    return keyboard
-
-# Обработчик кнопки "Назад"
-@dp.callback_query(lambda c: c.data == "back_to_main")
-async def back_to_main(callback_query: types.CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback_query.message.edit_text(
-        WELCOME_MESSAGE,
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=main_menu_kb()
-    )
-
-# Обработчик кнопки "Помощь"
-@dp.callback_query(lambda c: c.data == "help")
-async def help_callback(callback_query: types.CallbackQuery):
-    help_text = (
-        "🔍 *Как пользоваться ботом:*\n\n"
-        "*1. Анализ товара:*\n"
-        "   • Отправьте артикул\n"
-        "   • Получите полный анализ\n\n"
-        "*2. Анализ ниши:*\n"
-        "   • Укажите ключевое слово\n"
-        "   • Получите обзор рынка\n\n"
-        "*3. Отслеживание:*\n"
-        "   • Добавьте товары\n"
-        "   • Получайте уведомления\n\n"
-        "*4. Поиск товаров:*\n"
-        "   • Задайте параметры\n"
-        "   • Найдите прибыльные позиции\n\n"
-        "*5. Анализ внешки:*\n"
-        "   • Введите название товара или артикул\n"
-        "   • Получите анализ внешней рекламы и блогеров\n\n"
-        "*6. Анализ сезонности:*\n"
-        "   • Введите путь к категории товаров\n"
-        "   • Получите данные о годовой и недельной сезонности\n"
-        "   • Узнайте лучшие периоды для продаж\n\n"
-        "*7. Поиск блогеров:*\n"
-        "   • Введите артикул товара / ключевое слово / категорию\n"
-        "   • Получите список подходящих блогеров с контактами и статистикой\n\n"
-        "*Стоимость операций:*\n"
-        f"• Анализ товара: {COSTS['product_analysis']}₽\n"
-        f"• Анализ тренда: {COSTS['trend_analysis']}₽\n"
-        f"• Анализ ниши: {COSTS['niche_analysis']}₽\n"
-        f"• Анализ внешки: {COSTS['external_analysis']}₽\n"
-        f"• Отслеживание: {COSTS['tracking']}₽\n"
-        f"• Анализ сезонности: {COSTS['seasonality_analysis']}₽"
-    )
-    await callback_query.message.edit_text(
-        help_text,
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=back_keyboard()
-    )
-
-# Обработчик кнопки "Личный кабинет"
-@dp.callback_query(lambda c: c.data == "profile")
-async def profile_callback(callback_query: types.CallbackQuery):
-    try:
-        user_id = callback_query.from_user.id
-        logger.info(f"User {user_id} requested profile")
-        
-        # Проверяем, что callback_query.message существует
-        if not callback_query.message:
-            logger.error(f"Message is missing in callback_query for user {user_id}")
-            await callback_query.answer("Произошла ошибка. Пожалуйста, попробуйте ещё раз.", show_alert=True)
-            return
-        
-        balance = subscription_manager.get_user_balance(user_id)
-        tracked_items = subscription_manager.get_tracked_items(user_id)
-        subscription = subscription_manager.get_subscription(user_id)
-        subscription_stats = subscription_manager.get_subscription_stats(user_id)
-        
-        subscription_info = "❌ Нет активной подписки"
-        if subscription_stats:
-            # Проверяем, что дата окончания не None
-            if subscription_stats.get('expiry_date'):
-                expiry_date = datetime.fromisoformat(subscription_stats['expiry_date'])
-                days_left = (expiry_date - datetime.now()).days
-                subscription_info = (
-                    f"📅 *Текущая подписка:* {subscription}\\n"
-                    f"⏳ *Дней до окончания:* {days_left}\\n\\n"
-                    "*Лимиты:*\\n"
-                )
-            else:
-                subscription_info = (
-                    f"📅 *Текущая подписка:* {subscription}\\n"
-                    f"⏳ Без ограничения по времени\\n\\n"
-                    "*Лимиты:*\\n"
-                )
-            
-            for action, data in subscription_stats['actions'].items():
-                # Безопасное отображение бесконечности
-                if data['limit'] == float('inf'):
-                    limit_display = "∞"
-                else:
-                    limit_display = str(data['limit'])
-                subscription_info += f"• {action}: {data['used']}/{limit_display}\\n"
-        
-        profile_text = (
-            f"👤 *Личный кабинет*\\n\\n"
-            f"💰 Баланс: {balance}₽\\n"
-            f"📊 Отслеживаемых товаров: {len(tracked_items)}\\n\\n"
-            f"{subscription_info}"
-        )
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="📊 Мои товары", callback_data="tracked"),
-                InlineKeyboardButton(text="💳 Пополнить", callback_data="add_funds")
-            ],
-            [InlineKeyboardButton(text="📅 Подписка", callback_data="subscription")],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_main")]
-        ])
-        
-        # Ловим возможную ошибку при редактировании сообщения
-        try:
-            # Заменяем все символы "\\n" на реальные переводы строки, если они были добавлены ранее
-            clean_profile_text = profile_text.replace("\\n", "\n")
-
-            await callback_query.message.edit_text(
-                clean_profile_text,
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=keyboard
-            )
-        except Exception as edit_error:
-            logger.error(f"Error editing message in profile callback: {str(edit_error)}")
-            # Если не удалось отредактировать сообщение, пробуем без Markdown
-            try:
-                await callback_query.message.edit_text(
-                    clean_profile_text.replace('*', ''),  # Удаляем Markdown форматирование
-                    reply_markup=keyboard
-                )
-            except Exception as plain_error:
-                logger.error(f"Even plain text edit failed: {str(plain_error)}")
-                # Если не удалось отредактировать сообщение, отправляем ответ через answer
-                await callback_query.answer("Не удалось открыть личный кабинет. Попробуйте /start для перезапуска бота.", show_alert=True)
-            
-    except Exception as e:
-        logger.error(f"Error in profile callback: {str(e)}")
-        await callback_query.answer("Произошла ошибка при загрузке профиля. Пожалуйста, попробуйте позже.", show_alert=True)
-
-# Обработчик кнопки "Пополнить баланс"
 @dp.callback_query(lambda c: c.data == "add_funds")
 async def add_funds_callback(callback_query: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserStates.waiting_for_payment_amount)
@@ -4166,10 +3893,16 @@ async def get_mpsta_data(query):
     date_from = month_ago.strftime("%d.%m.%Y")
     date_to = today.strftime("%d.%m.%Y")
     
-    headers = {
-        "X-Mpstats-TOKEN": MPSTATS_API_KEY,
-        "Content-Type": "application/json"
-    }
+    # Импортируем браузерные утилиты
+    from mpstats_browser_utils import (
+        get_mpstats_headers, 
+        get_item_sales_browser, 
+        get_item_info_browser,
+        search_products_browser,
+        format_date_for_mpstats
+    )
+    
+    headers = get_mpstats_headers()
     
     try:
         # Сначала получаем данные через API MPSTA
@@ -7142,6 +6875,371 @@ async def handle_blogger_search_input(message: types.Message, state: FSMContext)
             reply_markup=back_keyboard()
         )
         await state.clear()
+
+# ============ ORACLE QUERIES HANDLERS ============
+
+# Инициализация Оракула
+try:
+    from oracle_queries import OracleQueries, format_oracle_results
+    oracle = OracleQueries()
+except ImportError:
+    logger.error("Модуль oracle_queries не найден!")
+    oracle = None
+
+@dp.callback_query(lambda c: c.data == "oracle_queries")
+async def handle_oracle_queries(callback_query: types.CallbackQuery, state: FSMContext):
+    """Обработчик кнопки Оракула запросов"""
+    try:
+        if not oracle:
+            await callback_query.message.edit_text(
+                "❌ Функция Оракула временно недоступна.\nПопробуйте позже.",
+                reply_markup=back_keyboard()
+            )
+            return
+            
+        user_id = callback_query.from_user.id
+        
+        # Проверяем баланс
+        user_balance = subscription_manager.get_user_balance(user_id)
+        cost = COSTS.get('oracle_queries', 50)
+        
+        if user_balance < cost:
+            await callback_query.message.edit_text(
+                f"💰 Недостаточно средств для анализа!\n\n"
+                f"Стоимость: {cost}₽\n"
+                f"Ваш баланс: {user_balance}₽\n"
+                f"Нужно: {cost - user_balance}₽",
+                reply_markup=back_keyboard()
+            )
+            return
+
+        # Создаем клавиатуру с параметрами
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🔍 Анализ запросов", callback_data="oracle_main_analysis"),
+                InlineKeyboardButton(text="📊 По категориям", callback_data="oracle_category_analysis")
+            ],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_main")]
+        ])
+        
+        oracle_text = (
+            "🔮 *Оракул запросов*\n\n"
+            "Выберите тип анализа:\n\n"
+            "🔍 *Анализ запросов* - детальный анализ поисковых запросов с:\n"
+            "• Частотностью и динамикой\n"
+            "• Выручкой топ товаров\n"
+            "• Монопольностью ниши\n"
+            "• Процентом рекламы\n\n"
+            "📊 *По категориям* - анализ товаров, брендов, поставщиков\n\n"
+            f"💰 *Стоимость:* {cost}₽"
+        )
+        
+        await callback_query.message.edit_text(
+            oracle_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=keyboard
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка в handle_oracle_queries: {e}")
+        await callback_query.message.edit_text(
+            "❌ Ошибка при инициализации Оракула. Попробуйте позже.",
+            reply_markup=back_keyboard()
+        )
+
+@dp.callback_query(lambda c: c.data == "oracle_main_analysis")
+async def handle_oracle_main_analysis(callback_query: types.CallbackQuery, state: FSMContext):
+    """Обработчик основного анализа Оракула"""
+    try:
+        await state.set_state(UserStates.waiting_for_oracle_queries)
+        
+        oracle_text = (
+            "🔮 *Оракул запросов - Основной анализ*\n\n"
+            "Укажите параметры для анализа в формате:\n"
+            "`количество_запросов | месяц | мин_выручка | мин_частотность`\n\n"
+            "*Примеры:*\n"
+            "• `3 | 2024-01 | 100000 | 1000`\n"
+            "• `5 | 2024-02 | 50000 | 500`\n\n"
+            "*Параметры:*\n"
+            "• Количество запросов: 1-5\n"
+            "• Месяц: YYYY-MM (например, 2024-01)\n"
+            "• Минимальная выручка за 30 дней (₽)\n"
+            "• Минимальная частотность за 30 дней\n\n"
+            "📝 Отправьте параметры:"
+        )
+        
+        await callback_query.message.edit_text(
+            oracle_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=back_keyboard()
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка в handle_oracle_main_analysis: {e}")
+        await callback_query.message.edit_text(
+            "❌ Ошибка. Попробуйте позже.",
+            reply_markup=back_keyboard()
+        )
+
+@dp.callback_query(lambda c: c.data == "oracle_category_analysis")
+async def handle_oracle_category_analysis(callback_query: types.CallbackQuery, state: FSMContext):
+    """Обработчик анализа по категориям"""
+    try:
+        await state.set_state(UserStates.waiting_for_oracle_category)
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📦 По товарам", callback_data="oracle_cat_products"),
+                InlineKeyboardButton(text="🏢 По брендам", callback_data="oracle_cat_brands")
+            ],
+            [
+                InlineKeyboardButton(text="🏭 По поставщикам", callback_data="oracle_cat_suppliers"),
+                InlineKeyboardButton(text="📂 По категориям", callback_data="oracle_cat_categories")
+            ],
+            [
+                InlineKeyboardButton(text="🔍 По запросам", callback_data="oracle_cat_queries")
+            ],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="oracle_queries")]
+        ])
+        
+        oracle_text = (
+            "🔮 *Оракул запросов - Анализ по категориям*\n\n"
+            "Выберите тип анализа:\n\n"
+            "📦 *По товарам* - топ товары по запросу\n"
+            "🏢 *По брендам* - анализ брендов\n"
+            "🏭 *По поставщикам* - анализ поставщиков\n"
+            "📂 *По категориям* - анализ категорий\n"
+            "🔍 *По запросам* - связанные запросы"
+        )
+        
+        await callback_query.message.edit_text(
+            oracle_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=keyboard
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка в handle_oracle_category_analysis: {e}")
+
+@dp.callback_query(lambda c: c.data.startswith("oracle_cat_"))
+async def handle_oracle_category_type(callback_query: types.CallbackQuery, state: FSMContext):
+    """Обработчик выбора типа категории"""
+    try:
+        category_type = callback_query.data.replace("oracle_cat_", "")
+        await state.update_data(oracle_category_type=category_type)
+        
+        type_names = {
+            "products": "товарам",
+            "brands": "брендам",
+            "suppliers": "поставщикам", 
+            "categories": "категориям",
+            "queries": "запросам"
+        }
+        
+        type_name = type_names.get(category_type, category_type)
+        
+        oracle_text = (
+            f"🔮 *Оракул по {type_name}*\n\n"
+            "Укажите параметры в формате:\n"
+            "`запрос/категория | месяц`\n\n"
+            "*Примеры:*\n"
+            "• `телефон | 2024-01`\n"
+            "• `косметика | 2024-02`\n"
+            "• `Электроника/Смартфоны и гаджеты | 2024-01`\n\n"
+            "📝 Отправьте параметры:"
+        )
+        
+        await callback_query.message.edit_text(
+            oracle_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=back_keyboard()
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка в handle_oracle_category_type: {e}")
+
+@dp.message(lambda message: message.text and message.text.strip(), UserStates.waiting_for_oracle_queries)
+async def handle_oracle_queries_input(message: types.Message, state: FSMContext):
+    """Обработчик ввода параметров для основного анализа Оракула"""
+    try:
+        if not oracle:
+            await message.reply("❌ Функция Оракула временно недоступна.")
+            await state.clear()
+            return
+            
+        user_id = message.from_user.id
+        user_input = message.text.strip()
+        
+        # Парсим входные данные
+        parts = [p.strip() for p in user_input.split('|')]
+        
+        if len(parts) != 4:
+            await message.reply(
+                "❌ Неверный формат! Используйте:\n"
+                "`количество | месяц | мин_выручка | мин_частотность`\n\n"
+                "Пример: `3 | 2024-01 | 100000 | 1000`"
+            )
+            return
+        
+        try:
+            queries_count = int(parts[0])
+            month = parts[1]
+            min_revenue = int(parts[2])
+            min_frequency = int(parts[3])
+            
+            # Валидация
+            if not (1 <= queries_count <= 5):
+                raise ValueError("Количество запросов должно быть от 1 до 5")
+                
+        except ValueError as e:
+            await message.reply(f"❌ Ошибка в параметрах: {e}")
+            return
+        
+        # Проверяем и списываем средства
+        user_balance = subscription_manager.get_user_balance(user_id)
+        cost = COSTS.get('oracle_queries', 50)
+        
+        if user_balance < cost:
+            await message.reply(
+                f"💰 Недостаточно средств!\n"
+                f"Нужно: {cost}₽, у вас: {user_balance}₽"
+            )
+            return
+        
+        # Списываем средства
+        subscription_manager.update_balance(user_id, -cost)
+        await state.clear()
+        
+        # Отправляем уведомление о начале анализа
+        loading_msg = await message.reply(
+            "🔮 *Оракул приступает к анализу...*\n\n"
+            f"📊 Запросов: {queries_count}\n"
+            f"📅 Месяц: {month}\n"
+            f"💰 Мин. выручка: {min_revenue:,}₽\n"
+            f"🔍 Мин. частотность: {min_frequency:,}\n\n"
+            "⏳ Это может занять 1-2 минуты...",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        
+        # Выполняем анализ
+        oracle_data = await oracle.get_search_queries_data(
+            queries_count, month, min_revenue, min_frequency
+        )
+        
+        # Форматируем и отправляем результат
+        result_text = format_oracle_results(oracle_data, "main")
+        
+        # Удаляем сообщение загрузки
+        try:
+            await loading_msg.delete()
+        except:
+            pass
+        
+        # Отправляем результат
+        await message.reply(
+            result_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=back_keyboard()
+        )
+        
+        # Логируем использование
+        logger.info(f"Oracle analysis completed for user {user_id}, cost: {cost}₽")
+        
+    except Exception as e:
+        logger.error(f"Ошибка в oracle queries input: {e}")
+        await state.clear()
+        await message.reply(
+            "❌ Ошибка при анализе. Попробуйте позже.\n"
+            "Средства возвращены на баланс.",
+            reply_markup=back_keyboard()
+        )
+        # Возвращаем средства при ошибке
+        subscription_manager.update_balance(user_id, COSTS.get('oracle_queries', 50))
+
+@dp.message(lambda message: message.text and message.text.strip(), UserStates.waiting_for_oracle_category)
+async def handle_oracle_category_input(message: types.Message, state: FSMContext):
+    """Обработчик ввода параметров для анализа по категориям"""
+    try:
+        if not oracle:
+            await message.reply("❌ Функция Оракула временно недоступна.")
+            await state.clear()
+            return
+            
+        user_id = message.from_user.id
+        user_input = message.text.strip()
+        
+        # Получаем тип анализа из состояния
+        data = await state.get_data()
+        category_type = data.get('oracle_category_type', 'products')
+        
+        # Парсим входные данные
+        parts = [p.strip() for p in user_input.split('|')]
+        
+        if len(parts) != 2:
+            await message.reply(
+                "❌ Неверный формат! Используйте:\n"
+                "`запрос/категория | месяц`\n\n"
+                "Пример: `телефон | 2024-01`"
+            )
+            return
+        
+        query_category = parts[0]
+        month = parts[1]
+        
+        # Проверяем и списываем средства
+        user_balance = subscription_manager.get_user_balance(user_id)
+        cost = COSTS.get('oracle_queries', 50)
+        
+        if user_balance < cost:
+            await message.reply(f"💰 Недостаточно средств! Нужно: {cost}₽")
+            return
+        
+        # Списываем средства
+        subscription_manager.update_balance(user_id, -cost)
+        await state.clear()
+        
+        # Отправляем уведомление о начале анализа
+        loading_msg = await message.reply(
+            f"🔮 *Анализ по {category_type}...*\n\n"
+            f"🔍 Запрос: {query_category}\n"
+            f"📅 Месяц: {month}\n\n"
+            "⏳ Анализирую данные...",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        
+        # Выполняем анализ
+        oracle_data = await oracle.get_category_analysis(
+            query_category, month, category_type
+        )
+        
+        # Форматируем и отправляем результат
+        result_text = format_oracle_results(oracle_data, "category")
+        
+        # Удаляем сообщение загрузки
+        try:
+            await loading_msg.delete()
+        except:
+            pass
+        
+        # Отправляем результат
+        await message.reply(
+            result_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=back_keyboard()
+        )
+        
+        # Логируем использование
+        logger.info(f"Oracle category analysis completed for user {user_id}, type: {category_type}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка в oracle category input: {e}")
+        await state.clear()
+        await message.reply(
+            "❌ Ошибка при анализе. Средства возвращены.",
+            reply_markup=back_keyboard()
+        )
+        # Возвращаем средства при ошибке
+        subscription_manager.update_balance(user_id, COSTS.get('oracle_queries', 50))
 
 
 if __name__ == '__main__':

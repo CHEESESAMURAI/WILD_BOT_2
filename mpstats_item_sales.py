@@ -3,6 +3,7 @@ import aiohttp
 import logging
 from datetime import datetime, timedelta
 import json
+from mpstats_browser_utils import get_mpstats_headers, get_item_sales_browser, get_item_info_browser, format_date_for_mpstats
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -13,7 +14,7 @@ MPSTAT_API_KEY = "68431d2ac72ea4.96910328a56006b24a55daf65db03835d5fe5b4d"
 
 async def get_item_sales(sku, publish_date, days=3):
     """
-    Получает данные о продажах и выручке по SKU за указанный период (по умолчанию 3 дня).
+    Получает данные о продажах и выручке по SKU за указанный период (браузерный подход).
     
     Args:
         sku (str): Идентификатор товара (SKU или nmId)
@@ -30,180 +31,123 @@ async def get_item_sales(sku, publish_date, days=3):
         d1 = datetime.strptime(publish_date, "%Y-%m-%d")
         d2 = d1 + timedelta(days=days)
         
-        # Форматируем даты для API-запроса в формате DD.MM.YYYY
-        # Используем формат как в product_mpstat.py
-        date_from = d1.strftime("%d.%m.%Y")
-        date_to = d2.strftime("%d.%m.%Y")
+        # Форматируем даты для API-запроса
+        date_from = format_date_for_mpstats(d1)
+        date_to = format_date_for_mpstats(d2)
         
-        headers = {
-            "X-Mpstats-TOKEN": MPSTAT_API_KEY,
-            "Content-Type": "application/json",
-            "Accept": "application/json"
-        }
+        logger.info(f"Requesting sales data from {date_from} to {date_to}")
         
-        # Используем ту же структуру URL, что и в product_mpstat.py для получения данных о продажах
-        # Пробуем использовать существующий API эндпоинт для получения sales данных
-        sales_url = f"https://mpstats.io/api/wb/get/item/{sku}/sales"
+        # Используем браузерный подход для получения данных о продажах
+        sales_data = await get_item_sales_browser(sku, date_from, date_to)
         
-        logger.info(f"Requesting URL: {sales_url}")
-        
-        async with aiohttp.ClientSession() as session:
-            # Используем POST запрос с параметрами в теле
-            data = {
-                "d1": date_from,
-                "d2": date_to
+        if sales_data:
+            logger.info(f"MPSTATS Item Sales API response received successfully")
+            
+            # Адаптируем данные к ожидаемому формату
+            result = {
+                "sku": sku,
+                "title": f"Product {sku}",
+                "publishDate": publish_date,
+                "units_sold_total": 0,
+                "revenue_total": 0,
+                "orders_total": 0,
+                "avg_price": 0,
+                "orders_growth_pct": 0,
+                "revenue_growth_pct": 0,
+                "orders_growth_abs": 0,
+                "revenue_growth_abs": 0,
+                "account": "",
+                "daily_data": sales_data if isinstance(sales_data, list) else []
             }
-            async with session.post(sales_url, headers=headers, json=data) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    logger.info(f"MPSTATS Item Sales API response received successfully")
+            
+            # Обрабатываем данные продаж
+            if isinstance(sales_data, list) and len(sales_data) > 0:
+                # Фильтруем данные за указанный период
+                period_data = []
+                for sale in sales_data:
+                    if isinstance(sale, dict):
+                        sale_date = sale.get("date", "")
+                        if sale_date:
+                            try:
+                                sale_datetime = datetime.strptime(sale_date, "%Y-%m-%d")
+                                if d1 <= sale_datetime < d2:
+                                    period_data.append(sale)
+                            except ValueError:
+                                continue
+                
+                if period_data:
+                    # Суммируем показатели за период
+                    result["units_sold_total"] = sum(sale.get("sales", 0) for sale in period_data)
+                    result["revenue_total"] = sum(sale.get("revenue", 0) for sale in period_data)
+                    result["orders_total"] = sum(sale.get("orders", 0) for sale in period_data)
                     
-                    # Адаптируем данные к формату, который ожидается для item_sales
-                    result = {
-                        "sku": sku,
-                        "title": f"Product {sku}",
-                        "publishDate": publish_date,
-                        "units_sold_total": 0,
-                        "revenue_total": 0,
-                        "orders_total": 0,
-                        "avg_price": 0,
-                        "orders_growth_pct": 0,
-                        "revenue_growth_pct": 0,
-                        "orders_growth_abs": 0,
-                        "revenue_growth_abs": 0,
-                        "account": "",
-                        "daily_data": []
-                    }
+                    # Рассчитываем среднюю цену
+                    if result["units_sold_total"] > 0:
+                        result["avg_price"] = round(result["revenue_total"] / result["units_sold_total"])
                     
-                    # Обрабатываем данные
-                    if isinstance(data, dict) and "sales" in data:
-                        sales_data = data["sales"]
-                        result["daily_data"] = sales_data
+                    # Рассчитываем прирост по сравнению с предыдущим периодом
+                    prev_start = d1 - timedelta(days=days)
+                    prev_end = d1
+                    
+                    prev_period_data = []
+                    for sale in sales_data:
+                        if isinstance(sale, dict):
+                            sale_date = sale.get("date", "")
+                            if sale_date:
+                                try:
+                                    sale_datetime = datetime.strptime(sale_date, "%Y-%m-%d")
+                                    if prev_start <= sale_datetime < prev_end:
+                                        prev_period_data.append(sale)
+                                except ValueError:
+                                    continue
+                    
+                    if prev_period_data:
+                        prev_orders = sum(sale.get("orders", 0) for sale in prev_period_data)
+                        prev_revenue = sum(sale.get("revenue", 0) for sale in prev_period_data)
                         
-                        # Рассчитываем общие показатели за период
-                        if len(sales_data) > 0:
-                            # Берем только данные за указанный период
-                            period_data = [
-                                sale for sale in sales_data 
-                                if d1 <= datetime.strptime(sale.get("date", "1970-01-01"), "%Y-%m-%d") < d2
-                            ]
-                            
-                            if period_data:
-                                # Суммируем показатели за период
-                                result["units_sold_total"] = sum(sale.get("sales", 0) for sale in period_data)
-                                result["revenue_total"] = sum(sale.get("revenue", 0) for sale in period_data)
-                                result["orders_total"] = sum(sale.get("orders", 0) for sale in period_data)
-                                
-                                # Рассчитываем среднюю цену
-                                if result["units_sold_total"] > 0:
-                                    result["avg_price"] = round(result["revenue_total"] / result["units_sold_total"])
-                                
-                                # Рассчитываем прирост по сравнению с предыдущим периодом
-                                # Для этого берем данные за предыдущие дни (равные по количеству)
-                                prev_start = d1 - timedelta(days=days)
-                                prev_end = d1
-                                
-                                prev_period_data = [
-                                    sale for sale in sales_data 
-                                    if prev_start <= datetime.strptime(sale.get("date", "1970-01-01"), "%Y-%m-%d") < prev_end
-                                ]
-                                
-                                if prev_period_data:
-                                    prev_orders = sum(sale.get("orders", 0) for sale in prev_period_data)
-                                    prev_revenue = sum(sale.get("revenue", 0) for sale in prev_period_data)
-                                    
-                                    # Абсолютный прирост
-                                    result["orders_growth_abs"] = result["orders_total"] - prev_orders
-                                    result["revenue_growth_abs"] = result["revenue_total"] - prev_revenue
-                                    
-                                    # Процентный прирост
-                                    if prev_orders > 0:
-                                        result["orders_growth_pct"] = round((result["orders_growth_abs"] / prev_orders) * 100)
-                                    if prev_revenue > 0:
-                                        result["revenue_growth_pct"] = round((result["revenue_growth_abs"] / prev_revenue) * 100)
-                    
-                    return {
-                        "success": True,
-                        "data": result
-                    }
-                else:
-                    error_text = await response.text()
-                    logger.error(f"MPSTATS Item Sales API error: {response.status} - {error_text}")
-                    
-                    # Пробуем альтернативный API эндпоинт
-                    alt_url = f"https://mpstats.io/api/wb/get/items/by/id"
-                    logger.info(f"Trying alternative URL: {alt_url}")
-                    
-                    alt_data = {
-                        "id": sku
-                    }
-                    async with session.post(alt_url, headers=headers, json=alt_data) as alt_response:
-                        if alt_response.status == 200:
-                            alt_data = await alt_response.json()
-                            logger.info(f"Alternative API response received successfully")
-                            
-                            # Обрабатываем данные из альтернативного API
-                            result = {
-                                "sku": sku,
-                                "title": f"Product {sku}",
-                                "publishDate": publish_date,
-                                "units_sold_total": 0,
-                                "revenue_total": 0,
-                                "orders_total": 0,
-                                "avg_price": 0,
-                                "orders_growth_pct": 0,
-                                "revenue_growth_pct": 0,
-                                "orders_growth_abs": 0,
-                                "revenue_growth_abs": 0,
-                                "account": "",
-                                "daily_data": []
-                            }
-                            
-                            if isinstance(alt_data, list) and len(alt_data) > 0:
-                                for item in alt_data:
-                                    if str(item.get("id")) == str(sku):
-                                        # Находим нужный товар
-                                        result["title"] = item.get("name", f"Product {sku}")
-                                        
-                                        # Используем salesPerDay и revenuePerDay для расчета показателей за 3 дня
-                                        sales_per_day = item.get("salesPerDay", 0)
-                                        revenue_per_day = item.get("revenuePerDay", 0)
-                                        
-                                        result["units_sold_total"] = round(sales_per_day * days)
-                                        result["revenue_total"] = round(revenue_per_day * days)
-                                        result["orders_total"] = result["units_sold_total"]  # Примерно равно количеству единиц
-                                        
-                                        # Средняя цена
-                                        if sales_per_day > 0:
-                                            result["avg_price"] = round(revenue_per_day / sales_per_day)
-                                        
-                                        # Процентный прирост (условно 5%)
-                                        result["orders_growth_pct"] = 5
-                                        result["revenue_growth_pct"] = 5
-                                        
-                                        # Абсолютный прирост
-                                        result["orders_growth_abs"] = round(result["orders_total"] * 0.05)
-                                        result["revenue_growth_abs"] = round(result["revenue_total"] * 0.05)
-                                        
-                                        break
-                            
-                            return {
-                                "success": True,
-                                "data": result
-                            }
-                        else:
-                            alt_error = await alt_response.text()
-                            logger.error(f"Alternative API error: {alt_response.status} - {alt_error}")
-                            return {
-                                "success": False,
-                                "error": f"API error: {response.status}",
-                                "details": f"Primary API: {error_text}, Alternative API: {alt_error}"
-                            }
+                        # Абсолютный прирост
+                        result["orders_growth_abs"] = result["orders_total"] - prev_orders
+                        result["revenue_growth_abs"] = result["revenue_total"] - prev_revenue
+                        
+                        # Процентный прирост
+                        if prev_orders > 0:
+                            result["orders_growth_pct"] = round((result["orders_growth_abs"] / prev_orders) * 100)
+                        if prev_revenue > 0:
+                            result["revenue_growth_pct"] = round((result["revenue_growth_abs"] / prev_revenue) * 100)
+            
+            # Пробуем получить дополнительную информацию о товаре
+            try:
+                item_info = await get_item_info_browser(sku)
+                if item_info:
+                    # Извлекаем название товара если есть
+                    if isinstance(item_info, list) and len(item_info) > 0:
+                        for item in item_info:
+                            if isinstance(item, dict) and str(item.get("id")) == str(sku):
+                                result["title"] = item.get("name", result["title"])
+                                break
+                    elif isinstance(item_info, dict):
+                        result["title"] = item_info.get("name", result["title"])
+            except Exception as e:
+                logger.warning(f"Could not get item info for {sku}: {e}")
+            
+            return {
+                "success": True,
+                "data": result
+            }
+        else:
+            logger.error(f"No sales data received for SKU {sku}")
+            return {
+                "success": False,
+                "error": "No sales data available",
+                "details": f"SKU: {sku}, Period: {date_from} to {date_to}"
+            }
+            
     except Exception as e:
-        logger.error(f"Error fetching item sales data: {str(e)}")
+        logger.error(f"Error getting item sales for SKU {sku}: {str(e)}", exc_info=True)
         return {
             "success": False,
-            "error": f"Exception: {str(e)}"
+            "error": f"Ошибка при получении данных: {str(e)}",
+            "details": f"SKU: {sku}, Date: {publish_date}, Days: {days}"
         }
 
 def parse_item_sales_data(response_data):
