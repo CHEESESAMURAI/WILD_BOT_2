@@ -126,7 +126,8 @@ COSTS = {
     'seasonality_analysis': 25,  # Добавляем стоимость анализа сезонности
     'ai_generation': 20,  # Добавляем стоимость AI генерации
     'blogger_search': 30,  # Добавляем стоимость поиска блогеров
-    'oracle_queries': 50  # Добавляем стоимость оракула запросов
+    'oracle_queries': 50,  # Добавляем стоимость оракула запросов
+    'supplier_analysis': 25  # Добавляем стоимость анализа поставщика
 }
 
 # Стоимость подписок
@@ -177,6 +178,7 @@ class UserStates(StatesGroup):
     waiting_for_blogger_search = State()  # Состояние для ожидания ввода для поиска блогеров
     waiting_for_oracle_queries = State()  # Состояние для ожидания ввода запросов Оракула
     waiting_for_oracle_category = State()  # Состояние для ожидания ввода категории Оракула
+    waiting_for_supplier = State()  # Состояние для ожидания ввода поставщика для анализа
 
 # Приветственное сообщение
 WELCOME_MESSAGE = (
@@ -211,30 +213,33 @@ def main_menu_kb():
         ],
         [
             InlineKeyboardButton(text="🏢 Анализ бренда", callback_data="brand_analysis"),
-            InlineKeyboardButton(text="🔍 Анализ внешки", callback_data="external_analysis")
+            InlineKeyboardButton(text="🏭 Анализ поставщика", callback_data="supplier_analysis")
         ],
         [
-            InlineKeyboardButton(text="🌐 Глобальный поиск", callback_data="product_search"),
-            InlineKeyboardButton(text="📱 Отслеживание", callback_data="track_item")
+            InlineKeyboardButton(text="🔍 Анализ внешки", callback_data="external_analysis"),
+            InlineKeyboardButton(text="🌐 Глобальный поиск", callback_data="product_search")
         ],
         [
-            InlineKeyboardButton(text="📦 Отслеживаемые", callback_data="tracked"),
-            InlineKeyboardButton(text="👤 Личный кабинет", callback_data="profile")
+            InlineKeyboardButton(text="📱 Отслеживание", callback_data="track_item"),
+            InlineKeyboardButton(text="📦 Отслеживаемые", callback_data="tracked")
         ],
         [
-            InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="add_funds"),
-            InlineKeyboardButton(text="📅 Подписка", callback_data="subscription")
+            InlineKeyboardButton(text="👤 Личный кабинет", callback_data="profile"),
+            InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="add_funds")
         ],
         [
-            InlineKeyboardButton(text="🗓️ Анализ сезонности", callback_data="seasonality_analysis"),
+            InlineKeyboardButton(text="📅 Подписка", callback_data="subscription"),
             InlineKeyboardButton(text="📊 Статистика", callback_data="stats")
         ],
         [
-            InlineKeyboardButton(text="🤖 Помощь с нейронкой", callback_data="ai_helper"),
-            InlineKeyboardButton(text="👥 Поиск блогеров", callback_data="blogger_search")
+            InlineKeyboardButton(text="🗓️ Анализ сезонности", callback_data="seasonality_analysis"),
+            InlineKeyboardButton(text="🤖 Помощь с нейронкой", callback_data="ai_helper")
         ],
         [
-            InlineKeyboardButton(text="🔮 Оракул запросов", callback_data="oracle_queries"),
+            InlineKeyboardButton(text="👥 Поиск блогеров", callback_data="blogger_search"),
+            InlineKeyboardButton(text="🔮 Оракул запросов", callback_data="oracle_queries")
+        ],
+        [
             InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")
         ]
     ])
@@ -7241,6 +7246,141 @@ async def handle_oracle_category_input(message: types.Message, state: FSMContext
         # Возвращаем средства при ошибке
         subscription_manager.update_balance(user_id, COSTS.get('oracle_queries', 50))
 
+# === АНАЛИЗ ПОСТАВЩИКА ===
+
+@dp.callback_query(lambda c: c.data == "supplier_analysis")
+async def handle_supplier_analysis(callback_query: types.CallbackQuery, state: FSMContext):
+    """Обработчик запроса анализа поставщика"""
+    try:
+        await state.set_state(UserStates.waiting_for_supplier)
+        
+        supplier_text = (
+            "🏭 **АНАЛИЗ ПОСТАВЩИКА**\n\n"
+            "Введите данные поставщика для анализа:\n\n"
+            "📋 **Формат ввода:**\n"
+            "• **ИНН:** `7743453483`\n"
+            "• **ОГРН:** `1247700478101`\n"
+            "• **Полное название:** `ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ \"ДИАЭНДКО МАРКЕТПЛЭЙС СЭЙЛС МЕНЕДЖМЕНТ\"`\n"
+            "• **Сокращение:** `Marketplace Sales Management`\n\n"
+            f"💰 Стоимость: {COSTS['supplier_analysis']}₽\n\n"
+            "📊 **Что вы получите:**\n"
+            "• Основная информация о поставщике\n"
+            "• Количество товаров в ассортименте\n"
+            "• Средние цены и рейтинги\n"
+            "• Объем продаж и выручка за 30 дней\n"
+            "• Распределение по категориям\n"
+            "• Топ-3 самых продаваемых товара\n"
+            "• Оценка рекламной активности\n\n"
+            "✏️ Введите ИНН, ОГРН или название поставщика:"
+        )
+        
+        await callback_query.message.edit_text(
+            supplier_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=back_keyboard()
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка в handle_supplier_analysis: {e}")
+        await callback_query.answer("Ошибка при инициализации анализа поставщика")
+
+@dp.message(lambda message: message.text and message.text.strip(), UserStates.waiting_for_supplier)
+async def handle_supplier_input(message: types.Message, state: FSMContext):
+    """Обработчик ввода названия поставщика"""
+    try:
+        user_id = message.from_user.id
+        supplier_name = message.text.strip()
+        
+        # Проверяем баланс
+        user_balance = subscription_manager.get_user_balance(user_id)
+        cost = COSTS.get('supplier_analysis', 25)
+        
+        if user_balance < cost:
+            await message.reply(
+                f"💰 Недостаточно средств!\n"
+                f"Нужно: {cost}₽, у вас: {user_balance}₽\n\n"
+                "Пополните баланс через главное меню.",
+                reply_markup=back_keyboard()
+            )
+            return
+        
+        # Списываем средства
+        subscription_manager.update_balance(user_id, -cost)
+        await state.clear()
+        
+        # Отправляем уведомление о начале анализа
+        loading_msg = await message.reply(
+            f"🏭 **Анализирую поставщика: {supplier_name}**\n\n"
+            "⏳ Собираю данные о товарах...\n"
+            "📊 Анализирую продажи...\n"
+            "💰 Рассчитываю метрики...\n\n"
+            "Это может занять 30-60 секунд.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        
+        # Импортируем функции из модуля анализа поставщика
+        try:
+            from supplier_analysis import get_supplier_analysis, format_supplier_message
+        except ImportError:
+            await message.reply(
+                "❌ Модуль анализа поставщика недоступен.\n"
+                "Средства возвращены на баланс.",
+                reply_markup=back_keyboard()
+            )
+            subscription_manager.update_balance(user_id, cost)
+            return
+        
+        # Выполняем анализ
+        supplier_data = await get_supplier_analysis(supplier_name)
+        
+        # Удаляем сообщение загрузки
+        try:
+            await loading_msg.delete()
+        except:
+            pass
+        
+        if supplier_data.get('error'):
+            # Возвращаем средства при ошибке
+            subscription_manager.update_balance(user_id, cost)
+            await message.reply(
+                f"❌ {supplier_data['error']}\n\n"
+                "Средства возвращены на ваш баланс.\n"
+                "Попробуйте другое название поставщика.",
+                reply_markup=back_keyboard()
+            )
+            return
+        
+        # Форматируем результат
+        result_text = format_supplier_message(supplier_data)
+        
+        # Отправляем результат
+        await message.reply(
+            result_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=back_keyboard()
+        )
+        
+        # Логируем использование
+        logger.info(f"Supplier analysis completed for user {user_id}, supplier: {supplier_name}, cost: {cost}₽")
+        
+    except Exception as e:
+        logger.error(f"Ошибка в handle_supplier_input: {e}")
+        await state.clear()
+        
+        # Возвращаем средства при ошибке
+        try:
+            subscription_manager.update_balance(user_id, COSTS.get('supplier_analysis', 25))
+        except:
+            pass
+        
+        await message.reply(
+            "❌ Произошла ошибка при анализе поставщика.\n"
+            "Средства возвращены на баланс.\n"
+            "Попробуйте позже или обратитесь в поддержку.",
+            reply_markup=back_keyboard()
+        )
+
+
 
 if __name__ == '__main__':
-    asyncio.run(main()) 
+    asyncio.run(main())
