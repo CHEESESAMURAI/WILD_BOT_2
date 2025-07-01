@@ -416,7 +416,8 @@ class SubscriptionManager:
                     'brand_analysis': 1,
                     'global_search': 3,
                     'external_analysis': 1,
-                    'ai_generation': 3
+                    'ai_generation': 3,
+                    'supply_planning': 1
                 }
             
             subscription_type, end_date = result
@@ -443,7 +444,8 @@ class SubscriptionManager:
                             'brand_analysis': 5,
                             'global_search': 10,
                             'external_analysis': 5,
-                            'ai_generation': 10
+                            'ai_generation': 10,
+                            'supply_planning': 5
                         }
                     elif subscription_type == 'pro':
                         return {
@@ -453,7 +455,8 @@ class SubscriptionManager:
                             'brand_analysis': 15,
                             'global_search': 25,
                             'external_analysis': 15,
-                            'ai_generation': 50
+                            'ai_generation': 50,
+                            'supply_planning': 15
                         }
                     elif subscription_type == 'business':
                         return {
@@ -463,7 +466,8 @@ class SubscriptionManager:
                             'brand_analysis': float('inf'),
                             'global_search': float('inf'),
                             'external_analysis': float('inf'),
-                            'ai_generation': float('inf')
+                            'ai_generation': float('inf'),
+                            'supply_planning': float('inf')
                         }
             
             # Подписка неактивна или отсутствует - базовые лимиты
@@ -474,7 +478,8 @@ class SubscriptionManager:
                 'brand_analysis': 1,
                 'global_search': 3,
                 'external_analysis': 1,
-                'ai_generation': 3
+                'ai_generation': 3,
+                'supply_planning': 1
             }
     
     def can_perform_action(self, user_id: int, action_type: str) -> bool:

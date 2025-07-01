@@ -127,8 +127,7 @@ COSTS = {
     'ai_generation': 20,  # Добавляем стоимость AI генерации
     'blogger_search': 30,  # Добавляем стоимость поиска блогеров
     'oracle_queries': 50,  # Добавляем стоимость оракула запросов
-    'supplier_analysis': 25,  # Добавляем стоимость анализа поставщика
-    'supply_planning': 30  # Добавляем стоимость планирования поставок
+    'supplier_analysis': 25  # Добавляем стоимость анализа поставщика
 }
 
 # Стоимость подписок
@@ -218,12 +217,8 @@ def main_menu_kb():
             InlineKeyboardButton(text="🏭 Анализ поставщика", callback_data="supplier_analysis")
         ],
         [
-            InlineKeyboardButton(text="📦 План поставок", callback_data="supply_planning"),
-            InlineKeyboardButton(text="🔍 Анализ внешки", callback_data="external_analysis")
-        ],
-        [
-            InlineKeyboardButton(text="🌐 Глобальный поиск", callback_data="product_search"),
-            InlineKeyboardButton(text="📱 Отслеживание", callback_data="track_item")
+            InlineKeyboardButton(text="🔍 Анализ внешки", callback_data="external_analysis"),
+            InlineKeyboardButton(text="🌐 Глобальный поиск", callback_data="product_search")
         ],
         [
             InlineKeyboardButton(text="📱 Отслеживание", callback_data="track_item"),
@@ -7387,199 +7382,6 @@ async def handle_supplier_input(message: types.Message, state: FSMContext):
         )
 
 
-# === ПЛАНИРОВАНИЕ ПОСТАВОК ===
-
-
-
-# === ПЛАНИРОВАНИЕ ПОСТАВОК ===
-
-@dp.callback_query(lambda c: c.data == "supply_planning")
-async def handle_supply_planning(callback_query: types.CallbackQuery, state: FSMContext):
-    """Обработчик запроса планирования поставок"""
-    try:
-        await state.set_state(UserStates.waiting_for_supply_planning)
-        
-        supply_text = (
-            "�� *ПЛАН ПОСТАВОК*\n\n"
-            "🎯 *Назначение:*\n"
-            "Помогает оценить остатки и потребность в новых поставках, "
-            "чтобы не терять продажи из-за нулевых остатков.\n\n"
-            "📊 *Что вы получите:*\n"
-            "• Текущие остатки на складе\n"
-            "• Среднедневные продажи\n"
-            "• Дни до окончания остатков\n"
-            "• Рекомендуемый объем поставки\n"
-            "• Цветовая маркировка критичности\n"
-            "• Детальные графики и аналитику\n\n"
-            "🟢 >10 дней остатка - хорошо\n"
-            "🟡 3-10 дней - внимание\n"
-            "🔴 <3 дней - срочно пополнить!\n\n"
-            f"💰 Стоимость: {COSTS.get('supply_planning', 30)}₽\n\n"
-            "📝 *Введите артикулы товаров:*\n"
-            "Можно несколько через запятую или по одному на строке\n\n"
-            "*Пример:*\n"
-            "`123456789, 987654321, 456789123`\n"
-            "или\n"
-            "`123456789`\n"
-            "`987654321`\n"
-            "`456789123`"
-        )
-        
-        await callback_query.message.edit_text(
-            supply_text,
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=back_keyboard()
-        )
-        
-    except Exception as e:
-        logger.error(f"Ошибка в handle_supply_planning: {e}")
-        await callback_query.answer("Ошибка при инициализации планирования поставок")
-
-@dp.message(lambda message: message.text and message.text.strip(), UserStates.waiting_for_supply_planning)
-async def handle_supply_planning_input(message: types.Message, state: FSMContext):
-    """Обработчик ввода артикулов для планирования поставок"""
-    try:
-        user_id = message.from_user.id
-        user_input = message.text.strip()
-        
-        # Проверяем и списываем средства
-        cost = COSTS.get('supply_planning', 30)
-        if not subscription_manager.can_perform_action(user_id, 'supply_planning'):
-            await message.reply(
-                f"❌ Недостаточно средств для анализа планирования поставок\n"
-                f"Стоимость: {cost}₽\n\n"
-                f"Ваш баланс: {subscription_manager.get_user_balance(user_id)}₽",
-                reply_markup=back_keyboard()
-            )
-            await state.clear()
-            return
-        
-        # Списываем средства
-        subscription_manager.update_balance(user_id, -cost)
-        
-        # Парсим артикулы
-        articles = []
-        for line in user_input.replace(',', '\n').split('\n'):
-            line = line.strip()
-            if line and line.isdigit() and len(line) >= 8:
-                articles.append(line)
-        
-        if not articles:
-            # Возвращаем средства при ошибке
-            subscription_manager.update_balance(user_id, cost)
-            await message.reply(
-                "❌ Не найдено валидных артикулов\n\n"
-                "Пожалуйста, введите артикулы товаров (минимум 8 цифр):\n"
-                "• Можно несколько через запятую\n"
-                "• Или каждый с новой строки\n\n"
-                "*Пример:* `123456789, 987654321`",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=back_keyboard()
-            )
-            return
-        
-        if len(articles) > 20:
-            # Возвращаем средства при ошибке
-            subscription_manager.update_balance(user_id, cost)
-            await message.reply(
-                f"❌ Слишком много артикулов ({len(articles)})\n\n"
-                "Максимум 20 товаров за один анализ.\n"
-                "Пожалуйста, уменьшите количество артикулов.",
-                reply_markup=back_keyboard()
-            )
-            await state.clear()
-            return
-        
-        # Отправляем сообщение о начале анализа
-        processing_msg = await message.reply(
-            f"🔄 Анализируем планирование поставок для {len(articles)} товаров...\n"
-            f"⏱ Это может занять 1-2 минуты"
-        )
-        
-        # Импортируем и используем модуль планирования поставок
-        from supply_planning import supply_planner, format_supply_planning_report
-        
-        # Выполняем анализ
-        products_data = await supply_planner.analyze_multiple_products(articles)
-        
-        if not products_data:
-            # Возвращаем средства при отсутствии данных
-            subscription_manager.update_balance(user_id, cost)
-            await processing_msg.edit_text(
-                "❌ Не удалось получить данные о товарах\n\n"
-                "Возможные причины:\n"
-                "• Неверные артикулы\n"
-                "• Товары не найдены на Wildberries\n"
-                "• Проблемы с API\n\n"
-                "Средства возвращены на баланс.",
-                reply_markup=back_keyboard()
-            )
-            await state.clear()
-            return
-        
-        # Генерируем графики
-        charts_paths = supply_planner.generate_supply_planning_charts(products_data, user_id)
-        
-        # Форматируем отчет
-        report_text = format_supply_planning_report(products_data)
-        
-        # Удаляем сообщение о процессе
-        await processing_msg.delete()
-        
-        # Отправляем основной отчет
-        await message.reply(
-            report_text,
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=back_keyboard()
-        )
-        
-        # Отправляем графики, если они созданы
-        if charts_paths:
-            media_group = []
-            captions = ["📊 Обзор состояния остатков", "📈 Детальный анализ планирования поставок"]
-            
-            for i, chart_path in enumerate(charts_paths):
-                if chart_path and os.path.exists(chart_path):
-                    caption = captions[i] if i < len(captions) else f"График {i+1}"
-                    media_group.append(types.InputMediaPhoto(
-                        media=types.FSInputFile(chart_path),
-                        caption=caption if i == 0 else ""
-                    ))
-            
-            if media_group:
-                await message.reply_media_group(media_group)
-                
-                # Удаляем временные файлы
-                for chart_path in charts_paths:
-                    if chart_path and os.path.exists(chart_path):
-                        try:
-                            os.remove(chart_path)
-                        except:
-                            pass
-        
-        # Логируем использование
-        logger.info(f"Supply planning analysis completed for user {user_id}, {len(articles)} articles")
-        
-        await state.clear()
-        
-    except Exception as e:
-        # Возвращаем средства при ошибке
-        try:
-            cost = COSTS.get('supply_planning', 30)
-            subscription_manager.update_balance(user_id, cost)
-        except:
-            pass
-            
-        logger.error(f"Error in supply planning analysis: {str(e)}")
-        await message.reply(
-            "❌ Произошла ошибка при анализе планирования поставок\n\n"
-            "Средства возвращены на баланс.\n"
-            "Попробуйте позже или обратитесь в поддержку.",
-            reply_markup=back_keyboard()
-        )
-        await state.clear()
-
 
 if __name__ == '__main__':
     asyncio.run(main())
-
