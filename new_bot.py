@@ -181,6 +181,7 @@ class UserStates(StatesGroup):
     waiting_for_oracle_category = State()  # Состояние для ожидания ввода категории Оракула
     waiting_for_supplier = State()  # Состояние для ожидания ввода поставщика для анализа
     waiting_for_supply_planning = State()  # Состояние для ожидания ввода артикулов для планирования поставок
+    waiting_for_ad_monitoring = State()  # Состояние для ожидания ввода артикулов для мониторинга рекламы
 
 # Приветственное сообщение
 WELCOME_MESSAGE = (
@@ -246,6 +247,7 @@ def main_menu_kb():
             InlineKeyboardButton(text="🔮 Оракул запросов", callback_data="oracle_queries")
         ],
         [
+            InlineKeyboardButton(text="📊 Мониторинг рекламы", callback_data="ad_monitoring"),
             InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")
         ]
     ])
@@ -7573,6 +7575,214 @@ async def handle_supply_planning_input(message: types.Message, state: FSMContext
         logger.error(f"Error in supply planning analysis: {str(e)}")
         await message.reply(
             "❌ Произошла ошибка при анализе планирования поставок\n\n"
+            "Средства возвращены на баланс.\n"
+            "Попробуйте позже или обратитесь в поддержку.",
+            reply_markup=back_keyboard()
+        )
+        await state.clear()
+
+
+# === МОНИТОРИНГ РЕКЛАМЫ ===
+
+@dp.callback_query(lambda c: c.data == "ad_monitoring")
+async def handle_ad_monitoring(callback_query: types.CallbackQuery, state: FSMContext):
+    """Обработчик запроса мониторинга рекламы"""
+    try:
+        await state.set_state(UserStates.waiting_for_ad_monitoring)
+        
+        ad_monitoring_text = (
+            "📊 *МОНИТОРИНГ РЕКЛАМЫ*\n\n"
+            "🎯 *Назначение:*\n"
+            "Анализ эффективности платной рекламы - идет ли трафик, "
+            "растут ли продажи, окупается ли реклама.\n\n"
+            "📈 *Что вы получите:*\n"
+            "• Статус активности рекламы (MPStats)\n"
+            "• Названия/артикулы рекламируемых товаров\n"
+            "• Охват/показы рекламы (MPStats)\n"
+            "• CTR (клики/показы) (MPStats)\n"
+            "• Расходы на рекламу (ввод вручную/CRM)\n"
+            "• Продажи с рекламы (MPStats/ввод вручную)\n"
+            "• Расчет ROI: (Доход - Расход) / Расход\n"
+            "• Дата запуска рекламы\n\n"
+            "🎨 *Визуализация:*\n"
+            "• Таблицы/карточки по каждому товару\n"
+            "• Мини-графики: Расходы/Продажи/ROI по времени\n"
+            "• Цветовая маркировка по ROI:\n"
+            "  🟢 >100% (прибыльно)\n"
+            "  🟡 0-100% (в ноль)\n"
+            "  🔴 <0% (убыток)\n\n"
+            "📊 *Источники данных:*\n"
+            "• MPStats: статистика продаж, остатки, рекламная активность\n"
+            "• WB API: остатки, заказы, отзывы, цены, скидки\n"
+            "• Внутренние данные: факты поставок, затраты на рекламу\n\n"
+            f"💰 Стоимость: 35₽\n\n"
+            "📝 *Введите артикулы товаров для мониторинга:*\n"
+            "Можно несколько через запятую или по одному на строке\n\n"
+            "*Пример:*\n"
+            "`123456789, 987654321, 456789123`\n"
+            "или\n"
+            "`123456789`\n"
+            "`987654321`\n"
+            "`456789123`"
+        )
+        
+        await callback_query.message.edit_text(
+            ad_monitoring_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=back_keyboard()
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка в handle_ad_monitoring: {e}")
+        await callback_query.answer("Ошибка при инициализации мониторинга рекламы")
+
+@dp.message(lambda message: message.text and message.text.strip(), UserStates.waiting_for_ad_monitoring)
+async def handle_ad_monitoring_input(message: types.Message, state: FSMContext):
+    """Обработчик ввода артикулов для мониторинга рекламы"""
+    try:
+        user_id = message.from_user.id
+        user_input = message.text.strip()
+        
+        # Проверяем и списываем средства
+        cost = 35
+        balance = subscription_manager.get_user_balance(user_id)
+        if balance < cost:
+            await message.reply(
+                f"❌ Недостаточно средств для мониторинга рекламы\n"
+                f"Стоимость: {cost}₽\n\n"
+                f"Ваш баланс: {balance}₽",
+                reply_markup=back_keyboard()
+            )
+            await state.clear()
+            return
+        
+        # Списываем средства
+        subscription_manager.update_balance(user_id, -cost)
+        
+        # Парсим артикулы
+        articles = []
+        for line in user_input.replace(',', '\n').split('\n'):
+            line = line.strip()
+            if line and line.isdigit() and len(line) >= 8:
+                articles.append(line)
+        
+        if not articles:
+            # Возвращаем средства при ошибке
+            subscription_manager.update_balance(user_id, cost)
+            await message.reply(
+                "❌ Не найдено валидных артикулов\n\n"
+                "Пожалуйста, введите артикулы товаров (минимум 8 цифр):\n"
+                "• Можно несколько через запятую\n"
+                "• Или каждый с новой строки\n\n"
+                "*Пример:* `123456789, 987654321`",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=back_keyboard()
+            )
+            return
+        
+        if len(articles) > 15:
+            # Возвращаем средства при ошибке
+            subscription_manager.update_balance(user_id, cost)
+            await message.reply(
+                f"❌ Слишком много артикулов ({len(articles)})\n\n"
+                "Максимум 15 товаров за один анализ.\n"
+                "Пожалуйста, уменьшите количество артикулов.",
+                reply_markup=back_keyboard()
+            )
+            await state.clear()
+            return
+        
+        # Отправляем сообщение о начале анализа
+        processing_msg = await message.reply(
+            f"📊 Анализируем рекламу для {len(articles)} товаров...\n"
+            f"⏱ Это может занять 1-2 минуты"
+        )
+        
+        # Импортируем и используем модуль мониторинга рекламы
+        from ad_monitoring import AdMonitor, format_ad_monitoring_report
+        
+        # Создаем экземпляр монитора
+        ad_monitor = AdMonitor(MPSTATS_API_KEY)
+        
+        # Выполняем анализ
+        ad_data_list = await ad_monitor.analyze_multiple_products_ads(articles)
+        
+        if not ad_data_list:
+            # Возвращаем средства при отсутствии данных
+            subscription_manager.update_balance(user_id, cost)
+            await processing_msg.edit_text(
+                "❌ Не удалось получить данные о рекламе\n\n"
+                "Возможные причины:\n"
+                "• Неверные артикулы\n"
+                "• Товары не найдены на Wildberries\n"
+                "• Нет рекламных кампаний для данных товаров\n"
+                "• Проблемы с MPStats API\n\n"
+                "Средства возвращены на баланс.",
+                reply_markup=back_keyboard()
+            )
+            await state.clear()
+            return
+        
+        # Генерируем графики
+        charts_paths = ad_monitor.generate_ad_monitoring_charts(ad_data_list, user_id)
+        
+        # Форматируем отчет
+        report_text = format_ad_monitoring_report(ad_data_list)
+        
+        # Удаляем сообщение о процессе
+        await processing_msg.delete()
+        
+        # Отправляем основной отчет
+        await message.reply(
+            report_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=back_keyboard()
+        )
+        
+        # Отправляем графики, если они созданы
+        if charts_paths:
+            media_group = []
+            captions = [
+                "📊 ROI рекламных кампаний по товарам", 
+                "💰 Расходы vs Доходы с рекламы",
+                "🎯 Обзор активности кампаний"
+            ]
+            
+            for i, chart_path in enumerate(charts_paths):
+                if chart_path and os.path.exists(chart_path):
+                    caption = captions[i] if i < len(captions) else f"График {i+1}"
+                    media_group.append(types.InputMediaPhoto(
+                        media=types.FSInputFile(chart_path),
+                        caption=caption if i == 0 else ""
+                    ))
+            
+            if media_group:
+                await message.reply_media_group(media_group)
+                
+                # Удаляем временные файлы
+                for chart_path in charts_paths:
+                    if chart_path and os.path.exists(chart_path):
+                        try:
+                            os.remove(chart_path)
+                        except:
+                            pass
+        
+        # Логируем использование
+        logger.info(f"Ad monitoring analysis completed for user {user_id}, {len(articles)} articles")
+        
+        await state.clear()
+        
+    except Exception as e:
+        # Возвращаем средства при ошибке
+        try:
+            cost = 35
+            subscription_manager.update_balance(user_id, cost)
+        except:
+            pass
+            
+        logger.error(f"Error in ad monitoring analysis: {str(e)}")
+        await message.reply(
+            "❌ Произошла ошибка при анализе рекламы\n\n"
             "Средства возвращены на баланс.\n"
             "Попробуйте позже или обратитесь в поддержку.",
             reply_markup=back_keyboard()

@@ -1,0 +1,82 @@
+                # Пробуем разные endpoints для получения рекламных данных
+                endpoints_to_try = [
+                    {
+                        "url": f"https://mpstats.io/api/wb/get/item/{article}/adverts?d1={date_from}&d2={date_to}",
+                        "method": "get",
+                        "data": None
+                    },
+                    {
+                        "url": f"https://mpstats.io/api/wb/get/item/{article}/adverts",
+                        "method": "get", 
+                        "data": None
+                    },
+                    {
+                        "url": "https://mpstats.io/api/wb/get/external-ads",
+                        "method": "post",
+                        "data": {
+                            "query": article,
+                            "path": "Товары для дома"  # Общая категория, если не знаем точную
+                        }
+                    },
+                    {
+                        "url": f"https://mpstats.io/api/wb/get/item/{article}/ads",
+                        "method": "get",
+                        "data": None
+                    }
+                ]
+                
+                for i, endpoint in enumerate(endpoints_to_try):
+                    try:
+                        url = endpoint["url"]
+                        method = endpoint["method"]
+                        data = endpoint["data"]
+                        
+                        logger.info(f"Trying endpoint {i+1}: {method.upper()} {url}")
+                        
+                        # Для external-ads используем упрощенные заголовки
+                        if "external-ads" in url:
+                            simple_headers = {
+                                "X-Mpstats-TOKEN": self.mpstats_api_key,
+                                "Content-Type": "application/json",
+                                "Accept": "application/json",
+                                "User-Agent": "Mozilla/5.0",
+                                "Origin": "https://mpstats.io",
+                                "Referer": "https://mpstats.io/"
+                            }
+                            request_headers = simple_headers
+                        else:
+                            request_headers = headers
+                        
+                        # Выполняем запрос
+                        if method == "post":
+                            async with session.post(url, headers=request_headers, json=data) as response:
+                                response_text = await response.text()
+                                if response.status == 200:
+                                    response_data = await response.json() if response.content_type == 'application/json' else {"raw": response_text}
+                                    logger.info(f"✅ Success with endpoint {i+1}")
+                                    return self._process_ad_data(response_data, article)
+                                elif response.status == 404:
+                                    logger.info(f"❌ Endpoint {i+1} not found (404)")
+                                    continue
+                                elif response.status == 405:
+                                    logger.info(f"❌ Method not allowed for endpoint {i+1} (405)")
+                                    continue
+                                else:
+                                    logger.warning(f"❌ Endpoint {i+1} error: {response.status} - {response_text}")
+                                    continue
+                        else:
+                            async with session.get(url, headers=request_headers) as response:
+                                if response.status == 200:
+                                    data = await response.json()
+                                    logger.info(f"✅ Success with endpoint {i+1}")
+                                    return self._process_ad_data(data, article)
+                                elif response.status == 404:
+                                    logger.info(f"❌ Endpoint {i+1} not found (404)")
+                                    continue
+                                elif response.status == 405:
+                                    logger.info(f"❌ Method not allowed for endpoint {i+1} (405)")
+                                    continue
+                                else:
+                                    error_text = await response.text()
+                                    logger.warning(f"❌ Endpoint {i+1} error: {response.status} - {error_text}")
+                                    continue
